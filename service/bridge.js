@@ -23,7 +23,7 @@ var os = require('os');
 var PORT = 8095;
 var VERSION = '0.0.0'; // build.sh pone aquí la versión de package.json
 var config = { atvHost: '192.168.1.35', atvPort: 49153, atvCreds: '', tvHost: '127.0.0.1', tvPort: 8002, tvTls: true, tvToken: '', windyKey: '',
-  homeGuard: false, homeKey: true };
+  homeGuard: false, homeKey: false };
 
 // La tele rechaza al instante las conexiones del mando que llegan por 127.0.0.1,
 // así que el puente se conecta a su propia IP de la red de casa.
@@ -458,7 +458,8 @@ function tvSettings(done) {
 // Tecla Home -> nuestro lanzador. YouTube (TizenTube) se ejecuta dentro de TizenBrew, igual que el lanzador,
 // así que "abrir TizenBrew" no basta para volver: hay que cerrarlo para que arranque en el lanzador con su
 // Auto launch. Hay dos formas de enterarse de que se ha pulsado Home:
-//  - homeKey (por defecto): Vetro intercepta Home (su Remapper abre TizenBrew) y apunta cada pulsación en
+//  - homeKey (desactivado por defecto: cerrar TizenBrew a la fuerza deja colgada su sesión de depuración y
+//    la tele puede no dejar reabrirlo hasta desenchufarla): Vetro intercepta Home (su Remapper abre TizenBrew) y apunta cada pulsación en
 //    GET /input. Si el lanzador no está cargado, se reinicia TizenBrew.
 //  - homeGuard (opcional, sin interceptar el mando): el Home de Samsung (csfs), siempre en segundo plano
 //    (estado 4), pasa a primer plano (2 o 3); entonces se abre TizenBrew encima.
