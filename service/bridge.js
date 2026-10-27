@@ -23,7 +23,7 @@ var os = require('os');
 var PORT = 8095;
 var VERSION = '0.0.0'; // build.sh pone aquí la versión de package.json
 var config = { atvHost: '192.168.1.35', atvPort: 49153, atvCreds: '', tvHost: '127.0.0.1', tvPort: 8002, tvTls: true, tvToken: '', windyKey: '',
-  homeGuard: false };
+  homeGuard: false, homeKey: true };
 
 // La tele rechaza al instante las conexiones del mando que llegan por 127.0.0.1,
 // así que el puente se conecta a su propia IP de la red de casa.
@@ -455,33 +455,74 @@ function tvSettings(done) {
   });
 }
 
-// Home de Samsung -> nuestro lanzador, sin capturar el mando. El Home de Samsung (csfs) está siempre en
-// marcha en segundo plano (estado 4); al pulsar Home pasa a primer plano (2 o 3). Cada segundo se pregunta
-// a Vetro por su estado y, si está delante, se abre TizenBrew encima. Si TizenBrew no tiene el lanzador
-// cargado (por ejemplo, está en YouTube), se cierra antes para que arranque en él con su Auto launch.
-var HOME_APP = 'com.samsung.tv.csfs', BREW_APP = 'xvvl3S1bvH.TizenBrewStandalone';
+// Tecla Home -> nuestro lanzador. YouTube (TizenTube) se ejecuta dentro de TizenBrew, igual que el lanzador,
+// así que "abrir TizenBrew" no basta para volver: hay que cerrarlo para que arranque en el lanzador con su
+// Auto launch. Hay dos formas de enterarse de que se ha pulsado Home:
+//  - homeKey (por defecto): Vetro intercepta Home (su Remapper abre TizenBrew) y apunta cada pulsación en
+//    GET /input. Si el lanzador no está cargado, se reinicia TizenBrew.
+//  - homeGuard (opcional, sin interceptar el mando): el Home de Samsung (csfs), siempre en segundo plano
+//    (estado 4), pasa a primer plano (2 o 3); entonces se abre TizenBrew encima.
+var HOME_APP = 'com.samsung.tv.csfs', BREW_APP = 'xvvl3S1bvH.TizenBrewStandalone', HOME_KEY = 63;
 var HOME_STATUS_CMD = 'aul_test getallappstatus 2>&1 | grep -A3 "appid: ' + HOME_APP + '$" | grep status';
-var launcherLoaded = false, homeBusy = false, homeLastTakeover = 0, homeTimer = null;
-function checkHome() {
-  if (!config.homeGuard || homeBusy) return;
-  homeBusy = true;
+var launcherLoaded = false, homeBusy = false, homeLastTakeover = 0, homeTimer = null, lastHomePress = null;
+function vetroGet(path, done) {
+  var finished = false;
+  function finish(err, d) { if (!finished) { finished = true; done(err, d); } }
+  var req = http.get({ host: VETRO.host, port: VETRO.port, path: path }, function (res) {
+    var out = '';
+    res.setEncoding('utf8');
+    res.on('data', function (c) { out += c; });
+    res.on('end', function () { try { finish(null, JSON.parse(out)); } catch (e) { finish(new Error('respuesta de Vetro no válida')); } });
+  });
+  req.setTimeout(5000, function () { req.abort(); finish(new Error('Vetro no responde')); });
+  req.on('error', function (e) { finish(e); });
+}
+function takeOver(reason, kill, done) {
+  homeLastTakeover = Date.now();
+  log('home: ' + reason + (kill ? ', reiniciando TizenBrew' : ', abriendo el lanzador'));
+  function launch() {
+    vetroPost('/apps/launch', { appId: BREW_APP }, 'abrir TizenBrew', function (err) {
+      if (err) log('home: ' + err.message);
+      done();
+    });
+  }
+  if (!kill) return launch();
+  launcherLoaded = false;
+  vetroPost('/exec', { cmd: 'app_launcher -k ' + BREW_APP }, 'cerrar TizenBrew', function () { setTimeout(launch, 600); });
+}
+function checkHome(done) {
   vetroPost('/exec', { cmd: HOME_STATUS_CMD }, 'leer el estado del Home', function (err, d) {
     var m = !err && d && /status:\s*(\d+)/.exec(d.output || '');
-    if (!m || (m[1] !== '2' && m[1] !== '3') || Date.now() - homeLastTakeover < 4000) { homeBusy = false; return; }
-    homeLastTakeover = Date.now();
-    var kill = launcherLoaded ? null : 'app_launcher -k ' + BREW_APP;
-    log('home: Home de Samsung delante, abriendo el lanzador' + (kill ? ' (reiniciando TizenBrew)' : ''));
-    function launch() {
-      vetroPost('/apps/launch', { appId: BREW_APP }, 'abrir TizenBrew', function (err2) {
-        if (err2) log('home: ' + err2.message);
-        homeBusy = false;
-      });
-    }
-    if (!kill) return launch();
-    vetroPost('/exec', { cmd: kill }, 'cerrar TizenBrew', function () { setTimeout(launch, 600); });
+    if (!m || (m[1] !== '2' && m[1] !== '3') || Date.now() - homeLastTakeover < 4000) return done();
+    takeOver('Home de Samsung delante', !launcherLoaded, done);
   });
 }
-function startHomeGuard() { stopHomeGuard(); homeTimer = setInterval(checkHome, 1000); }
+function checkHomeKey(done) {
+  vetroGet('/input', function (err, d) {
+    var events = (!err && d && d.status && d.status.events) || [], newest = null;
+    for (var i = 0; i < events.length; i++) {
+      var e = events[i];
+      if (e.code !== HOME_KEY || e.action !== 'down') continue;
+      var t = e.time_seconds * 1000 + Math.floor((e.time_microseconds || 0) / 1000);
+      if (newest === null || t > newest) newest = t;
+    }
+    if (newest === null) return done();
+    var first = lastHomePress === null;
+    if (!first && newest <= lastHomePress) return done();
+    lastHomePress = newest;
+    // La primera lectura solo marca dónde estamos; tampoco se actúa por pulsaciones viejas
+    if (first || Date.now() - newest > 5000 || launcherLoaded) return done();
+    takeOver('Home pulsado fuera del lanzador', true, done);
+  });
+}
+function homeTick() {
+  if (homeBusy || (!config.homeGuard && !config.homeKey)) return;
+  homeBusy = true;
+  var done = function () { homeBusy = false; };
+  if (config.homeGuard) return checkHome(done);
+  checkHomeKey(done);
+}
+function startHomeGuard() { stopHomeGuard(); homeTimer = setInterval(homeTick, 1000); }
 function stopHomeGuard() { if (homeTimer) clearInterval(homeTimer); homeTimer = null; }
 
 // Webcams de Windy. La clave llega por POST /config y nunca está en el repositorio. Las URL de las
@@ -532,7 +573,7 @@ function startServer() {
     if (u.pathname === '/status') {
       return reply(res, 200, { ok: true, version: VERSION, atvHost: config.atvHost, tvHost: config.tvHost, hasCreds: !!config.atvCreds, tvToken: config.tvToken,
         tvPort: config.tvPort, tvTls: config.tvTls, log: logLines, atvCreds: isLocal(req) ? config.atvCreds : undefined,
-        hasWindy: !!config.windyKey, homeGuard: config.homeGuard, windyKey: isLocal(req) ? config.windyKey : undefined });
+        hasWindy: !!config.windyKey, homeGuard: config.homeGuard, homeKey: config.homeKey, launcherLoaded: launcherLoaded, windyKey: isLocal(req) ? config.windyKey : undefined });
     }
     if (u.pathname === '/config' && req.method === 'POST') {
       var body = '';
@@ -547,6 +588,7 @@ function startServer() {
           if (c.tvPort) config.tvPort = c.tvPort;
           if (c.tvTls !== undefined) config.tvTls = !!c.tvTls;
           if (c.homeGuard !== undefined) config.homeGuard = !!c.homeGuard;
+          if (c.homeKey !== undefined) config.homeKey = !!c.homeKey;
           if (typeof c.windyKey === 'string' && /^[A-Za-z0-9]{0,64}$/.test(c.windyKey)) { config.windyKey = c.windyKey; webcamCache = {}; }
           reply(res, 200, { ok: true });
         } catch (e) { reply(res, 400, { ok: false, error: 'JSON no válido' }); }
@@ -684,6 +726,8 @@ module.exports = {
   tvSettings: tvSettings,
   webcam: webcam,
   checkHome: checkHome,
+  checkHomeKey: checkHomeKey,
+  homeTick: homeTick,
   _home: function (v) { if (v !== undefined) launcherLoaded = v; return { launcherLoaded: launcherLoaded, busy: homeBusy }; },
   VETRO: VETRO,
   _test: { seal: seal, open: open, hkdf: hkdf, opackPack: opackPack, opackUnpack: opackUnpack }

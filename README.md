@@ -3,7 +3,8 @@
 Lanzador con aspecto de tvOS para teles Samsung (Tizen) con [TizenBrew](https://github.com/reisxd/TizenBrew).
 
 - Fondos 4K de Wikimedia Commons con zoom lento y fundido (autor y licencia en pantalla).
-- Hora y tiempo de Barcelona (Open-Meteo): actual, máxima/mínima y próximas 6 horas.
+- Hora y tiempo de Barcelona (Open-Meteo): actual, máxima/mínima y las próximas 12 horas de 2 en 2.
+- Una sola fila de iconos a la vista; abajo/arriba cambia a la otra fila (con puntos de página).
 - Tarjeta con el cielo de Barcelona ahora: alterna las webcams de Collserola y Port Olímpic (Webcams provided by Windy.com).
 - Iconos que abren apps en un Apple TV de la misma red (protocolo Companion), cambian de entrada HDMI/USB de la tele o abren otros módulos de TizenBrew.
 
@@ -14,7 +15,7 @@ Lanzador con aspecto de tvOS para teles Samsung (Tizen) con [TizenBrew](https://
 | Ruta | Qué hace |
 |---|---|
 | `GET /status` | Estado del puente |
-| `POST /config` | Recibe `atvHost`, `atvCreds` (credenciales Companion de pyatv), `tvToken`, `windyKey` (clave gratuita de la API de webcams de Windy) y `homeGuard` (Home de Samsung → lanzador, desactivado por defecto) |
+| `POST /config` | Recibe `atvHost`, `atvCreds` (credenciales Companion de pyatv), `tvToken`, `windyKey` (clave gratuita de la API de webcams de Windy) `homeGuard` (Home de Samsung → lanzador, desactivado por defecto) y `homeKey` (volver al lanzador desde YouTube con Home, activado por defecto) |
 | `GET /atv/launch?id=<bundle>` | Abre una app en el Apple TV |
 | `GET /tv/source?pos=<n>` | Elige la entrada *n* del menú Fuentes de la tele |
 | `GET /tv/settings` | Abre la Configuración de la tele (`org.tizen.menu`) con Vetro |
@@ -22,7 +23,9 @@ Lanzador con aspecto de tvOS para teles Samsung (Tizen) con [TizenBrew](https://
 | `GET /webcam?id=<n>` | Imagen actual de una webcam de [Windy](https://api.windy.com/webcams) (necesita `windyKey` en `POST /config`) |
 | `GET /tv/input?to=<entrada>` | Cambia directamente a `tv`, `hdmi1`…`hdmi4` (necesita [Vetro](https://github.com/andrearicci93/vetro) con root en el puerto 9000) |
 
-**Tecla Home.** El Home de Samsung (`com.samsung.tv.csfs`) está siempre en marcha en segundo plano. Cada segundo, el puente pregunta a Vetro si ha pasado a primer plano y, si es así, abre TizenBrew encima; si TizenBrew no tiene el lanzador cargado, lo cierra antes para que arranque en él. No captura el mando. Está desactivado por defecto; se activa con `POST /config {"homeGuard": true}`.
+**Tecla Home y YouTube.** YouTube (TizenTube) se ejecuta dentro de TizenBrew, igual que el lanzador, así que abrir TizenBrew no basta para volver. Con la interceptación de Vetro (su Remapper abre TizenBrew al pulsar Home), el puente consulta cada segundo las pulsaciones que Vetro apunta en `GET /input`; si se pulsa Home y el lanzador no está cargado, cierra TizenBrew y lo vuelve a abrir para que arranque en él (`homeKey`, activado por defecto).
+
+**Alternativa sin interceptar el mando.** El Home de Samsung (`com.samsung.tv.csfs`) está siempre en marcha en segundo plano. Cada segundo, el puente pregunta a Vetro si ha pasado a primer plano y, si es así, abre TizenBrew encima; si TizenBrew no tiene el lanzador cargado, lo cierra antes para que arranque en él. No captura el mando. Está desactivado por defecto; se activa con `POST /config {"homeGuard": true}`.
 
 Una app no puede cambiar de entrada en Tizen. Para eso el puente pide a Vetro, que corre con root en la propia tele, que pulse la tecla de entrada directa del sistema (`XF86DiscretHDMI3`, etc.). El puente solo acepta esas cinco entradas. Al abrir una app del Apple TV, el puente también cambia la tele a `hdmi1`.
 

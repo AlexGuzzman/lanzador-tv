@@ -52,15 +52,20 @@
     position: fixed; top: 3.6vw; left: 4.2vw; right: 4.2vw;
     display: flex; justify-content: space-between; align-items: flex-start;
   }
-  #time { font-size: 8.2vw; font-weight: 200; letter-spacing: -0.25vw; line-height: 0.95; text-shadow: 0 0.3vw 2vw rgba(0,0,0,0.35); }
-  #date { font-size: 1.55vw; font-weight: 500; color: var(--text-soft); margin-top: 0.9vw; text-shadow: 0 0.2vw 1vw rgba(0,0,0,0.4); }
+  /* Hora y fecha, arriba de la tarjeta del tiempo */
+  .w-clock { display: flex; justify-content: space-between; align-items: baseline;
+             padding-bottom: 0.6vw; margin-bottom: 0.7vw; border-bottom: 1px solid rgba(255,255,255,0.18); }
+  #time { font-size: 2.9vw; font-weight: 200; letter-spacing: -0.08vw; line-height: 1; }
+  #date { font-size: 1vw; font-weight: 500; color: var(--text-soft); text-align: right; white-space: nowrap; }
 
   .glass {
     background: var(--glass); border: 1px solid var(--glass-border);
     -webkit-backdrop-filter: blur(36px) saturate(1.5); backdrop-filter: blur(36px) saturate(1.5);
   }
-  #weather { width: 27vw; padding: 1.3vw 1.6vw 1.2vw; border-radius: 1.6vw; opacity: 0; transition: opacity 1s ease; }
-  #weather.ready { opacity: 1; }
+  #weather { width: 27vw; padding: 1.3vw 1.6vw 1.2vw; border-radius: 1.6vw; }
+  /* El reloj se ve siempre; la parte del tiempo aparece cuando llegan los datos */
+  #weather .w-top, #w-hours { opacity: 0; transition: opacity 1s ease; }
+  #weather.ready .w-top, #weather.ready #w-hours { opacity: 1; }
   .w-top { display: flex; justify-content: space-between; align-items: flex-start; }
   #w-city { font-size: 1.15vw; font-weight: 600; }
   #w-temp { font-size: 3.9vw; font-weight: 300; line-height: 1; margin-top: 0.2vw; }
@@ -75,23 +80,30 @@
   .hr-v { font-size: 1vw; font-weight: 600; }
 
   /* ---------- Webcam: el cielo de Barcelona ahora ---------- */
-  #webcam { width: 24vw; margin-top: 1.6vw; padding: 0.8vw; border-radius: 1.6vw; opacity: 0; transition: opacity 1s ease; }
+  #webcam { width: 31vw; margin-top: 0; padding: 0.8vw; border-radius: 1.6vw; opacity: 0; transition: opacity 1s ease; }
   #webcam.ready { opacity: 1; }
   #cam-view { position: relative; display: block; width: 100%; padding-top: 56.25%; border-radius: 1vw; overflow: hidden; background: rgba(0,0,0,0.25); }
   .cam-img { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity 1.2s ease; }
   .cam-img.show { opacity: 1; }
   .cam-info { display: flex; justify-content: space-between; align-items: baseline; margin: 0.6vw 0.3vw 0; }
-  #cam-name { font-size: 1vw; font-weight: 600; }
-  #cam-age { font-size: 0.85vw; font-weight: 500; color: var(--text-soft); }
+  #cam-name { font-size: 1.15vw; font-weight: 600; }
+  #cam-age { font-size: 0.95vw; font-weight: 500; color: var(--text-soft); }
   #cam-credit { font-size: 0.7vw; color: var(--text-soft); margin: 0.25vw 0.3vw 0; }
 
   /* ---------- Iconos ---------- */
-  #rows { position: fixed; left: 0; right: 0; bottom: 3.4vw; }
-  .row { display: flex; justify-content: center; }
-  .row + .row { margin-top: 2.1vw; }
-  #row0 { width: max-content; margin: 0 auto; padding: 1.1vw 1vw; border-radius: 2.4vw;
-           background: rgba(255,255,255,0.14); border: 1px solid rgba(255,255,255,0.16);
-           -webkit-backdrop-filter: blur(40px) saturate(1.4); backdrop-filter: blur(40px) saturate(1.4); }
+  /* Una sola fila a la vista: las dos ocupan el mismo sitio y abajo/arriba cambia de una a otra */
+  #rows { position: fixed; left: 0; right: 0; bottom: 3.4vw; height: 8.92vw; }
+  .row { position: absolute; left: 50%; bottom: 0; display: flex; width: max-content;
+         padding: 1.1vw 1vw; border-radius: 2.4vw;
+         background: rgba(255,255,255,0.14); border: 1px solid rgba(255,255,255,0.16);
+         -webkit-backdrop-filter: blur(40px) saturate(1.4); backdrop-filter: blur(40px) saturate(1.4);
+         opacity: 0; pointer-events: none; transform: translate(-50%, 2.5vw);
+         transition: opacity 0.35s ease, transform 0.45s cubic-bezier(.2,.8,.2,1); }
+  .row.above { transform: translate(-50%, -2.5vw); }
+  .row.active { opacity: 1; pointer-events: auto; transform: translate(-50%, 0); }
+  #pager { position: fixed; left: 0; right: 0; bottom: 1.4vw; display: flex; justify-content: center; }
+  .dot { width: 0.55vw; height: 0.55vw; margin: 0 0.35vw; border-radius: 50%; background: rgba(255,255,255,0.35); transition: background 0.3s ease, transform 0.3s ease; }
+  .dot.on { background: rgba(255,255,255,0.95); transform: scale(1.2); }
   #label {
     position: fixed; left: 0; right: 0; text-align: center;
     font-size: 1.35vw; font-weight: 600; letter-spacing: 0.02vw;
@@ -183,8 +195,6 @@
 
   <header>
     <div>
-      <div id="time">--:--</div>
-      <div id="date"></div>
       <div id="webcam" class="glass">
         <a id="cam-view" href="https://www.windy.com/webcams" onclick="return false"><img class="cam-img" id="cam0" alt=""><img class="cam-img" id="cam1" alt=""></a>
         <div class="cam-info"><span id="cam-name"></span><span id="cam-age"></span></div>
@@ -192,6 +202,10 @@
       </div>
     </div>
     <div id="weather" class="glass">
+      <div class="w-clock">
+        <div id="time">--:--</div>
+        <div id="date"></div>
+      </div>
       <div class="w-top">
         <div>
           <div id="w-city">Barcelona</div>
@@ -209,6 +223,7 @@
 
   <div id="label"></div>
   <div id="rows"><div class="row" id="row0"></div><div class="row" id="row1"></div></div>
+  <div id="pager"><div class="dot"></div><div class="dot"></div></div>
   <div id="toast" class="glass"></div>
 
 <script>
@@ -433,12 +448,12 @@ function updateWeather() {
     document.getElementById("w-icon").innerHTML = now[0];
     document.getElementById("w-desc").textContent = now[1];
     document.getElementById("w-hilo").textContent = "Máx. " + Math.round(d.daily.temperature_2m_max[0]) + "°  Mín. " + Math.round(d.daily.temperature_2m_min[0]) + "°";
-    // Próximas 6 horas a partir de la hora actual
+    // Próximas 12 horas, de 2 en 2, a partir de la hora actual
     var h = d.hourly, start = 0, nowHour = c.time.slice(0, 13);
     for (var i = 0; i < h.time.length; i++) if (h.time[i].slice(0, 13) === nowHour) { start = i; break; }
     var html = "";
-    for (var k = 1; k <= 6 && start + k < h.time.length; k++) {
-      var j = start + k, info = weatherInfo(h.weather_code[j], h.is_day[j] === 1);
+    for (var k = 1; k <= 6 && start + 2 * k < h.time.length; k++) {
+      var j = start + 2 * k, info = weatherInfo(h.weather_code[j], h.is_day[j] === 1);
       html += '<div class="hr"><div class="hr-t">' + h.time[j].slice(11, 13) + '</div><div class="hr-i">' + info[0] +
               '</div><div class="hr-v">' + Math.round(h.temperature_2m[j]) + '°</div></div>';
     }
@@ -474,12 +489,20 @@ function focus(r, c) {
   fc = Math.max(0, Math.min(c, tiles[r].length - 1));
   var el = tiles[fr][fc], app = ROWS[fr][fc];
   el.className += " focus";
-  var label = document.getElementById("label"), rect = document.getElementById("row0").getBoundingClientRect();
+  showRow(fr);
+  var label = document.getElementById("label"), rect = document.getElementById("row" + fr).getBoundingClientRect();
   label.innerHTML = app.name + (app.sub ? "<small>" + app.sub + "</small>" : "");
   label.style.top = (rect.top - window.innerWidth * (app.sub ? 0.042 : 0.03)) + "px";
   label.className = "show";
   clearTimeout(labelTimer);
   labelTimer = setTimeout(function () { label.className = ""; }, 3000);
+}
+function showRow(r) {
+  for (var i = 0; i < ROWS.length; i++) {
+    document.getElementById("row" + i).className = "row" + (i === r ? " active" : i < r ? " above" : "");
+    var dot = document.getElementById("pager").children[i];
+    if (dot) dot.className = "dot" + (i === r ? " on" : "");
+  }
 }
 function move(dr, dc) {
   if (dr) {
