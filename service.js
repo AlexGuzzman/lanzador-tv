@@ -2407,9 +2407,26 @@ var net = require('net');
 var tls = require('tls');
 var http = require('http');
 var crypto = require('crypto');
+var os = require('os');
 
 var PORT = 8095;
 var config = { atvHost: '192.168.1.35', atvPort: 49153, atvCreds: '', tvHost: '127.0.0.1', tvPort: 8002, tvTls: true, tvToken: '' };
+
+// La tele rechaza al instante las conexiones del mando que llegan por 127.0.0.1,
+// así que el puente se conecta a su propia IP de la red de casa.
+function lanAddress() {
+  try {
+    var ifs = os.networkInterfaces();
+    for (var name in ifs) {
+      for (var i = 0; i < ifs[name].length; i++) {
+        var a = ifs[name][i];
+        if ((a.family === 'IPv4' || a.family === 4) && !a.internal) return a.address;
+      }
+    }
+  } catch (e) {}
+  return '127.0.0.1';
+}
+config.tvHost = lanAddress();
 
 // Registro corto para diagnosticar desde la red de casa (GET /status)
 var logLines = [];
@@ -2769,7 +2786,7 @@ function startServer() {
     var u = require('url').parse(req.url, true);
     if (req.method === 'OPTIONS') return reply(res, 204, {});
     if (u.pathname === '/status') {
-      return reply(res, 200, { ok: true, version: 2, atvHost: config.atvHost, hasCreds: !!config.atvCreds, tvToken: config.tvToken,
+      return reply(res, 200, { ok: true, version: 3, atvHost: config.atvHost, tvHost: config.tvHost, hasCreds: !!config.atvCreds, tvToken: config.tvToken,
         tvPort: config.tvPort, tvTls: config.tvTls, log: logLines, atvCreds: isLocal(req) ? config.atvCreds : undefined });
     }
     if (u.pathname === '/config' && req.method === 'POST') {
@@ -2779,6 +2796,7 @@ function startServer() {
         try {
           var c = JSON.parse(body);
           if (c.atvHost) config.atvHost = c.atvHost;
+          if (c.tvHost) config.tvHost = c.tvHost;
           if (c.atvCreds) config.atvCreds = c.atvCreds;
           if (c.tvToken !== undefined) config.tvToken = c.tvToken;
           if (c.tvPort) config.tvPort = c.tvPort;
