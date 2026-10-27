@@ -529,7 +529,8 @@ function launch() {
 
 // Abre otro módulo de TizenBrew igual que lo hace su propia interfaz
 function launchModule(fullName) {
-  if (typeof WebSocket === "undefined" || typeof tizen === "undefined") return;
+  // TizenBrew sirve el lanzador desde su servidor (127.0.0.1:8081), donde no existe el objeto tizen
+  if (typeof WebSocket === "undefined") return toast("No se puede abrir el módulo");
   var ws, mdl = null, waitTimer = null, frame = null;
   try { ws = new WebSocket("ws://localhost:8081"); } catch (e) { return toast("TizenBrew no responde"); }
   // TizenBrew carga su lista de módulos una vez al arrancar; si entonces falló (red aún no lista), la caché
@@ -556,7 +557,7 @@ function launchModule(fullName) {
     if (mdl) return;
     for (var i = 0; i < data.payload.length; i++) if (data.payload[i].fullName === fullName) mdl = data.payload[i];
     if (!mdl) return toast("No encuentro TizenTube en TizenBrew");
-    for (var k = 0; k < (mdl.keys || []).length; k++) { try { tizen.tvinputdevice.registerKey(mdl.keys[k]); } catch (e) {} }
+    if (typeof tizen !== "undefined") for (var k = 0; k < (mdl.keys || []).length; k++) { try { tizen.tvinputdevice.registerKey(mdl.keys[k]); } catch (e) {} }
     request("GET", "/launcher?state=module", null, function () {}); // el puente sabrá que hay que reiniciar TizenBrew
     ws.send(JSON.stringify({ type: 5, payload: mdl }));
     if (!mdl.evaluateScriptOnDocumentStart) return setTimeout(go, 150);

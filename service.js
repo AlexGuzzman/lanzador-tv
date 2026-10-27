@@ -2415,7 +2415,7 @@ var crypto = require('crypto');
 var os = require('os');
 
 var PORT = 8095;
-var VERSION = '16.0.0';
+var VERSION = '17.0.0';
 var config = { atvHost: '192.168.1.35', atvPort: 49153, atvCreds: '', tvHost: '127.0.0.1', tvPort: 8002, tvTls: true, tvToken: '', windyKey: '',
   homeGuard: false };
 
