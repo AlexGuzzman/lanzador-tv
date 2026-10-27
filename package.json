@@ -1,6 +1,6 @@
 {
   "name": "lanzador-tv",
-  "version": "15.0.0",
+  "version": "16.0.0",
   "description": "Lanzador estilo Apple para TizenBrew: fondo animado, hora, tiempo y apps.",
   "packageType": "app",
   "appName": "Inicio",

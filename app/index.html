@@ -530,28 +530,47 @@ function launch() {
 // Abre otro módulo de TizenBrew igual que lo hace su propia interfaz
 function launchModule(fullName) {
   if (typeof WebSocket === "undefined" || typeof tizen === "undefined") return;
-  var ws;
+  var ws, mdl = null, waitTimer = null, frame = null;
   try { ws = new WebSocket("ws://localhost:8081"); } catch (e) { return toast("TizenBrew no responde"); }
   // TizenBrew carga su lista de módulos una vez al arrancar; si entonces falló (red aún no lista), la caché
   // queda vacía. La primera petición pide recargarla (payload true), como hace su gestor de módulos.
   var tries = 0;
   function ask() { ws.send(JSON.stringify({ type: 4, payload: tries === 0 })); tries++; }
+  function go() {
+    clearTimeout(waitTimer);
+    if (frame && frame.parentNode) frame.parentNode.removeChild(frame);
+    location.href = mdl.appPath;
+  }
   ws.onopen = ask;
   ws.onmessage = function (ev) {
     var data;
     try { data = JSON.parse(ev.data); } catch (e) { return; }
+    // Módulos que inyectan su código (TizenTube): el servicio de TizenBrew prepara la inyección al crearse un
+    // contexto nuevo en la página y responde con LaunchModule (5); solo entonces se navega, como hace su interfaz.
+    if (data.type === 5 && mdl) return go();
     if (data.type !== 4) return;
     if (!data.payload) {
       if (tries >= 20) { ws.close(); return toast("TizenBrew no ha cargado sus módulos. Prueba desde su menú.", 5000); }
       return setTimeout(ask, 500);
     }
-    var mdl = null;
+    if (mdl) return;
     for (var i = 0; i < data.payload.length; i++) if (data.payload[i].fullName === fullName) mdl = data.payload[i];
     if (!mdl) return toast("No encuentro TizenTube en TizenBrew");
     for (var k = 0; k < (mdl.keys || []).length; k++) { try { tizen.tvinputdevice.registerKey(mdl.keys[k]); } catch (e) {} }
     request("GET", "/launcher?state=module", null, function () {}); // el puente sabrá que hay que reiniciar TizenBrew
     ws.send(JSON.stringify({ type: 5, payload: mdl }));
-    if (!mdl.evaluateScriptOnDocumentStart) setTimeout(function () { location.href = mdl.appPath; }, 150);
+    if (!mdl.evaluateScriptOnDocumentStart) return setTimeout(go, 150);
+    // Un marco vacío crea ese contexto nuevo sin salir del lanzador
+    setTimeout(function () {
+      frame = document.createElement("iframe");
+      frame.style.display = "none";
+      frame.src = "about:blank";
+      document.body.appendChild(frame);
+    }, 200);
+    waitTimer = setTimeout(function () {
+      if (frame && frame.parentNode) frame.parentNode.removeChild(frame);
+      toast("TizenBrew no ha respondido. Prueba desde su menú.", 5000);
+    }, 10000);
   };
   ws.onerror = function () { toast("TizenBrew no responde"); };
 }
