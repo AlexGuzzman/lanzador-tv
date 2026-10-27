@@ -2402,6 +2402,7 @@ return module.exports; })();
 //   GET  /tv/key?k=<KEY_...>     -> pulsa una tecla del mando de la tele (solo desde la tele)
 //   GET  /tv/source?pos=<n>      -> elige la entrada n del menú Fuentes (solo desde la tele)
 //   GET  /tv/input?to=<entrada>  -> cambia directamente a tv/hdmi1..hdmi4 con Vetro (solo desde la tele)
+//   GET  /tv/settings            -> abre la Configuración de la tele con Vetro (solo desde la tele)
 'use strict';
 
 var G = this; // objeto global del contexto que crea TizenBrew para el servicio
@@ -2807,13 +2808,11 @@ function tvSource(pos, done) {
 var VETRO = { host: '127.0.0.1', port: 9000 };
 var INPUT_KEYS = { tv: 'XF86DiscretSourceTV', hdmi1: 'XF86DiscretHDMI1', hdmi2: 'XF86DiscretHDMI2',
   hdmi3: 'XF86DiscretHDMI3', hdmi4: 'XF86DiscretHDMI4' };
-function tvInput(to, done) {
-  var key = INPUT_KEYS.hasOwnProperty(to) ? INPUT_KEYS[to] : null;
-  if (!key) return done(new Error('entrada desconocida: ' + to));
-  var body = JSON.stringify({ cmd: '/usr/bin/input_keyevent ' + key });
+function vetroPost(path, obj, what, done) {
+  var body = JSON.stringify(obj);
   var finished = false;
   function finish(err) { if (!finished) { finished = true; done(err); } }
-  var req = http.request({ host: VETRO.host, port: VETRO.port, method: 'POST', path: '/exec',
+  var req = http.request({ host: VETRO.host, port: VETRO.port, method: 'POST', path: path,
     headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } }, function (res) {
     var out = '';
     res.setEncoding('utf8');
@@ -2821,14 +2820,29 @@ function tvInput(to, done) {
     res.on('end', function () {
       var d;
       try { d = JSON.parse(out); } catch (e) { return finish(new Error('respuesta de Vetro no válida')); }
-      if (!d.ok) return finish(new Error('Vetro no pudo cambiar de entrada' + (d.error ? ': ' + d.error : '')));
-      log('entrada: ' + to);
+      if (!d.ok) return finish(new Error('Vetro no pudo ' + what + (d.error ? ': ' + d.error : '')));
       finish(null);
     });
   });
   req.setTimeout(10000, function () { req.abort(); finish(new Error('Vetro no responde')); });
   req.on('error', function (e) { finish(new Error('Vetro no responde (' + e.message + ')')); });
   req.end(body);
+}
+function tvInput(to, done) {
+  var key = INPUT_KEYS.hasOwnProperty(to) ? INPUT_KEYS[to] : null;
+  if (!key) return done(new Error('entrada desconocida: ' + to));
+  vetroPost('/exec', { cmd: '/usr/bin/input_keyevent ' + key }, 'cambiar de entrada', function (err) {
+    if (!err) log('entrada: ' + to);
+    done(err);
+  });
+}
+// Configuración de la tele: el Home de Samsung ya no está en la tecla Home, así que se abre su menú
+// (org.tizen.menu) con la función de abrir apps de Vetro, que comprueba que la app existe.
+function tvSettings(done) {
+  vetroPost('/apps/launch', { appId: 'org.tizen.menu' }, 'abrir la Configuración', function (err) {
+    if (!err) log('configuración abierta');
+    done(err);
+  });
 }
 
 // ---------------------------------------------------------------- Servidor HTTP
@@ -2845,7 +2859,7 @@ function startServer() {
     var u = require('url').parse(req.url, true);
     if (req.method === 'OPTIONS') return reply(res, 204, {});
     if (u.pathname === '/status') {
-      return reply(res, 200, { ok: true, version: 11, atvHost: config.atvHost, tvHost: config.tvHost, hasCreds: !!config.atvCreds, tvToken: config.tvToken,
+      return reply(res, 200, { ok: true, version: 12, atvHost: config.atvHost, tvHost: config.tvHost, hasCreds: !!config.atvCreds, tvToken: config.tvToken,
         tvPort: config.tvPort, tvTls: config.tvTls, log: logLines, atvCreds: isLocal(req) ? config.atvCreds : undefined });
     }
     if (u.pathname === '/config' && req.method === 'POST') {
@@ -2919,6 +2933,11 @@ function startServer() {
         });
       });
     }
+    if (u.pathname === '/tv/settings') {
+      return tvSettings(function (err) {
+        reply(res, err ? 500 : 200, err ? { ok: false, error: err.message } : { ok: true });
+      });
+    }
     if (u.pathname === '/tv/input') {
       return tvInput(String(u.query.to || ''), function (err) {
         reply(res, err ? 500 : 200, err ? { ok: false, error: err.message } : { ok: true });
@@ -2976,6 +2995,7 @@ module.exports = {
   tvKeys: tvKeys,
   tvSource: tvSource,
   tvInput: tvInput,
+  tvSettings: tvSettings,
   VETRO: VETRO,
   _test: { seal: seal, open: open, hkdf: hkdf, opackPack: opackPack, opackUnpack: opackUnpack }
 };

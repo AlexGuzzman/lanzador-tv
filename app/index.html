@@ -152,6 +152,8 @@
   .t-musica svg { width: 4.4em; height: 4.4em; }
   .t-usb      { background: linear-gradient(180deg, #a3a6ad 0%, #6c7079 100%); }
   .t-usb svg  { width: 4em; height: 4em; }
+  .t-ajustes  { background: linear-gradient(180deg, #8e9299 0%, #5b5f67 100%); }
+  .t-ajustes svg { width: 4.2em; height: 4.2em; }
   .big, .small { font-size: 0.95vw; }
 
   /* ---------- Avisos ---------- */
@@ -203,6 +205,7 @@ var PHOTO_SECONDS = 120;
 var SRC_APPLETV = 1, SRC_MOVISTAR = 3, SRC_USB = 4;
 
 var USB_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="9" width="10" height="13" rx="2"/><path d="M9 9V3h6v6M10.5 5.5h0M13.5 5.5h0"/></svg>';
+var GEAR_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>';
 var MUSIC_ICON = '<svg viewBox="0 0 24 24" fill="#fff"><path d="M9 17.5a2.5 2.5 0 1 1-2-2.45V5.8l11-2.3v11.2a2.5 2.5 0 1 1-2-2.45V7.2l-7 1.5z"/></svg>';
 var YT_ICON = '<svg viewBox="0 0 28 20"><rect width="28" height="20" rx="5.5" fill="#ff0000"/><path d="M11 5.5v9l8-4.5z" fill="#fff"/></svg>';
 var DISNEY_ARC = '<svg class="arc" viewBox="0 0 100 20" preserveAspectRatio="none"><defs><linearGradient id="dg" x1="0" x2="1"><stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset=".55" stop-color="#bfe9ff"/><stop offset="1" stop-color="#fff"/></linearGradient></defs><path d="M4 19C25 2 72 -2 97 12" stroke="url(#dg)" stroke-width="2.2" fill="none" stroke-linecap="round"/></svg>';
@@ -215,7 +218,8 @@ var TWITCH_ICON = '<svg viewBox="0 0 24 26"><path d="M4 2h17v11.5l-5 5h-4l-3 3v-
 var PLEX_X = '<svg viewBox="0 0 10 13"><path d="M1 0h4l4.5 6.5L5 13H1l4.5-6.5z" fill="#e5a00d"/></svg>';
 
 // type: "atv" abre una app del Apple TV, "input" cambia directamente de entrada (con Vetro),
-// "src" elige una entrada del menú Fuentes, "module" abre un módulo de TizenBrew
+// "src" elige una entrada del menú Fuentes, "module" abre un módulo de TizenBrew,
+// "settings" abre la Configuración de la tele (con Vetro)
 var ROWS = [
   [
     { name: "Movistar+ Deportes", cls: "t-mov-sp",  type: "input", to: "hdmi3",           html: "<b>M+</b><small>Deportes</small>", sub: "Canales en directo en el descodificador", badge: "EN DIRECTO" },
@@ -233,7 +237,7 @@ var ROWS = [
     { name: "DAZN",        cls: "t-dazn",    type: "atv", id: "com.dazn.theApp",   html: "<b>DA<br>ZN</b>" },
     { name: "Twitch",      cls: "t-twitch",  type: "atv", id: "tv.twitch",         html: TWITCH_ICON },
     { name: "Música",      cls: "t-musica",  type: "atv", id: "com.apple.TVMusic", html: MUSIC_ICON },
-    { name: "USB",         cls: "t-usb",     type: "src", pos: SRC_USB,            html: USB_ICON, sub: "Memoria conectada a la tele" }
+    { name: "Ajustes",     cls: "t-ajustes", type: "settings",                     html: GEAR_ICON, sub: "Configuración de la tele" }
   ]
 ];
 
@@ -431,6 +435,12 @@ function launch() {
   el.className += " pressed";
   setTimeout(function () { el.className = el.className.replace(" pressed", ""); }, 180);
   if (app.type === "module") { toast("Abriendo " + app.name + "…"); return launchModule(app.module); }
+  if (app.type === "settings") {
+    toast("Abriendo la Configuración…", 3000);
+    return request("GET", "/tv/settings", null, function (err) {
+      if (err) toast("No se pudo abrir la Configuración: " + err.message, 5000);
+    });
+  }
   if (app.type === "input") {
     toast("Cambiando a " + app.name + "…", 4000);
     return request("GET", "/tv/input?to=" + app.to, null, function (err) {
