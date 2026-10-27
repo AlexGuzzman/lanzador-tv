@@ -2815,7 +2815,7 @@ function startServer() {
     var u = require('url').parse(req.url, true);
     if (req.method === 'OPTIONS') return reply(res, 204, {});
     if (u.pathname === '/status') {
-      return reply(res, 200, { ok: true, version: 8, atvHost: config.atvHost, tvHost: config.tvHost, hasCreds: !!config.atvCreds, tvToken: config.tvToken,
+      return reply(res, 200, { ok: true, version: 9, atvHost: config.atvHost, tvHost: config.tvHost, hasCreds: !!config.atvCreds, tvToken: config.tvToken,
         tvPort: config.tvPort, tvTls: config.tvTls, log: logLines, atvCreds: isLocal(req) ? config.atvCreds : undefined });
     }
     if (u.pathname === '/config' && req.method === 'POST') {
@@ -2863,6 +2863,9 @@ function startServer() {
         var raw = fs.readFileSync(target).toString('latin1');
         var re = new RegExp(String(u.query.re || '.'), 'i'), found = [], seen = {};
         var parts = raw.match(/[\x20-\x7e]{4,}/g) || [];
+        // Textos de .NET: UTF-16LE (cada carácter seguido de un byte 0)
+        var wide = raw.match(/(?:[\x20-\x7e]\x00){4,}/g) || [];
+        for (var w = 0; w < wide.length; w++) parts.push(wide[w].replace(/\x00/g, ''));
         for (var i = 0; i < parts.length && found.length < 400; i++) {
           if (re.test(parts[i]) && !seen[parts[i]]) { seen[parts[i]] = 1; found.push(parts[i].slice(0, 200)); }
         }
