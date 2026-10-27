@@ -4,6 +4,7 @@ Lanzador con aspecto de tvOS para teles Samsung (Tizen) con [TizenBrew](https://
 
 - Fondos 4K de Wikimedia Commons con zoom lento y fundido (autor y licencia en pantalla).
 - Hora y tiempo de Barcelona (Open-Meteo): actual, máxima/mínima y próximas 6 horas.
+- Tarjeta con el cielo de Barcelona ahora: alterna las webcams de Collserola y Port Olímpic (Webcams provided by Windy.com).
 - Iconos que abren apps en un Apple TV de la misma red (protocolo Companion), cambian de entrada HDMI/USB de la tele o abren otros módulos de TizenBrew.
 
 ## Cómo funciona
@@ -13,10 +14,11 @@ Lanzador con aspecto de tvOS para teles Samsung (Tizen) con [TizenBrew](https://
 | Ruta | Qué hace |
 |---|---|
 | `GET /status` | Estado del puente |
-| `POST /config` | Recibe `atvHost`, `atvCreds` (credenciales Companion de pyatv) y `tvToken` |
+| `POST /config` | Recibe `atvHost`, `atvCreds` (credenciales Companion de pyatv), `tvToken` y `windyKey` (clave gratuita de la API de webcams de Windy) |
 | `GET /atv/launch?id=<bundle>` | Abre una app en el Apple TV |
 | `GET /tv/source?pos=<n>` | Elige la entrada *n* del menú Fuentes de la tele |
 | `GET /tv/settings` | Abre la Configuración de la tele (`org.tizen.menu`) con Vetro |
+| `GET /webcam?id=<n>` | Imagen actual de una webcam de [Windy](https://api.windy.com/webcams) (necesita `windyKey` en `POST /config`) |
 | `GET /tv/input?to=<entrada>` | Cambia directamente a `tv`, `hdmi1`…`hdmi4` (necesita [Vetro](https://github.com/andrearicci93/vetro) con root en el puerto 9000) |
 
 Una app no puede cambiar de entrada en Tizen. Para eso el puente pide a Vetro, que corre con root en la propia tele, que pulse la tecla de entrada directa del sistema (`XF86DiscretHDMI3`, etc.). El puente solo acepta esas cinco entradas. Al abrir una app del Apple TV, el puente también cambia la tele a `hdmi1`.

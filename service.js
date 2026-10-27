@@ -2403,6 +2403,7 @@ return module.exports; })();
 //   GET  /tv/source?pos=<n>      -> elige la entrada n del menú Fuentes (solo desde la tele)
 //   GET  /tv/input?to=<entrada>  -> cambia directamente a tv/hdmi1..hdmi4 con Vetro (solo desde la tele)
 //   GET  /tv/settings            -> abre la Configuración de la tele con Vetro (solo desde la tele)
+//   GET  /webcam?id=<n>          -> imagen actual de una webcam de Windy (solo desde la tele)
 'use strict';
 
 var G = this; // objeto global del contexto que crea TizenBrew para el servicio
@@ -2413,7 +2414,7 @@ var crypto = require('crypto');
 var os = require('os');
 
 var PORT = 8095;
-var config = { atvHost: '192.168.1.35', atvPort: 49153, atvCreds: '', tvHost: '127.0.0.1', tvPort: 8002, tvTls: true, tvToken: '' };
+var config = { atvHost: '192.168.1.35', atvPort: 49153, atvCreds: '', tvHost: '127.0.0.1', tvPort: 8002, tvTls: true, tvToken: '', windyKey: '' };
 
 // La tele rechaza al instante las conexiones del mando que llegan por 127.0.0.1,
 // así que el puente se conecta a su propia IP de la red de casa.
@@ -2845,6 +2846,38 @@ function tvSettings(done) {
   });
 }
 
+// Webcams de Windy. La clave llega por POST /config y nunca está en el repositorio. Las URL de las
+// imágenes caducan a los 10 minutos en el plan gratuito, así que se piden de nuevo pasados 5.
+var webcamCache = {};
+function webcam(id, done) {
+  if (!config.windyKey) return done(new Error('falta la clave de Windy'));
+  var cached = webcamCache[id];
+  if (cached && Date.now() - cached.at < 5 * 60 * 1000) return done(null, cached.data);
+  var finished = false;
+  function finish(err, data) { if (!finished) { finished = true; done(err, data); } }
+  var req = require('https').request({ host: 'api.windy.com', method: 'GET',
+    path: '/webcams/api/v3/webcams/' + id + '?include=images,urls&lang=es',
+    headers: { 'x-windy-api-key': config.windyKey, 'Accept': 'application/json' } }, function (res) {
+    var out = '';
+    res.setEncoding('utf8');
+    res.on('data', function (c) { out += c; });
+    res.on('end', function () {
+      if (res.statusCode !== 200) return finish(new Error('Windy respondió ' + res.statusCode));
+      var w;
+      try { w = JSON.parse(out); } catch (e) { return finish(new Error('respuesta de Windy no válida')); }
+      var img = w.images && w.images.current && w.images.current.preview;
+      if (!img) return finish(new Error('la webcam no tiene imagen'));
+      var data = { image: img, updated: w.lastUpdatedOn || null, status: w.status || null,
+        link: (w.urls && w.urls.detail) || ('https://www.windy.com/webcams/' + id) };
+      webcamCache[id] = { at: Date.now(), data: data };
+      finish(null, data);
+    });
+  });
+  req.setTimeout(15000, function () { req.abort(); finish(new Error('Windy no responde')); });
+  req.on('error', function (e) { finish(new Error('Windy no responde (' + e.message + ')')); });
+  req.end();
+}
+
 // ---------------------------------------------------------------- Servidor HTTP
 function reply(res, code, obj) {
   res.writeHead(code, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Content-Type' });
@@ -2859,8 +2892,9 @@ function startServer() {
     var u = require('url').parse(req.url, true);
     if (req.method === 'OPTIONS') return reply(res, 204, {});
     if (u.pathname === '/status') {
-      return reply(res, 200, { ok: true, version: 12, atvHost: config.atvHost, tvHost: config.tvHost, hasCreds: !!config.atvCreds, tvToken: config.tvToken,
-        tvPort: config.tvPort, tvTls: config.tvTls, log: logLines, atvCreds: isLocal(req) ? config.atvCreds : undefined });
+      return reply(res, 200, { ok: true, version: 13, atvHost: config.atvHost, tvHost: config.tvHost, hasCreds: !!config.atvCreds, tvToken: config.tvToken,
+        tvPort: config.tvPort, tvTls: config.tvTls, log: logLines, atvCreds: isLocal(req) ? config.atvCreds : undefined,
+        hasWindy: !!config.windyKey, windyKey: isLocal(req) ? config.windyKey : undefined });
     }
     if (u.pathname === '/config' && req.method === 'POST') {
       var body = '';
@@ -2874,6 +2908,7 @@ function startServer() {
           if (c.tvToken !== undefined) config.tvToken = c.tvToken;
           if (c.tvPort) config.tvPort = c.tvPort;
           if (c.tvTls !== undefined) config.tvTls = !!c.tvTls;
+          if (typeof c.windyKey === 'string' && /^[A-Za-z0-9]{0,64}$/.test(c.windyKey)) { config.windyKey = c.windyKey; webcamCache = {}; }
           reply(res, 200, { ok: true });
         } catch (e) { reply(res, 400, { ok: false, error: 'JSON no válido' }); }
       });
@@ -2931,6 +2966,13 @@ function startServer() {
         tvInput('hdmi1', function (err2) {
           reply(res, 200, { ok: true, input: err2 ? err2.message : 'hdmi1' });
         });
+      });
+    }
+    if (u.pathname === '/webcam') {
+      var camId = String(u.query.id || '');
+      if (!/^[0-9]{6,12}$/.test(camId)) return reply(res, 400, { ok: false, error: 'id no válido' });
+      return webcam(camId, function (err, data) {
+        reply(res, err ? 502 : 200, err ? { ok: false, error: err.message } : { ok: true, webcam: data });
       });
     }
     if (u.pathname === '/tv/settings') {
@@ -2996,6 +3038,7 @@ module.exports = {
   tvSource: tvSource,
   tvInput: tvInput,
   tvSettings: tvSettings,
+  webcam: webcam,
   VETRO: VETRO,
   _test: { seal: seal, open: open, hkdf: hkdf, opackPack: opackPack, opackUnpack: opackUnpack }
 };

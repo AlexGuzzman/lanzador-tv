@@ -74,6 +74,17 @@
   .hr-i { width: 1.7vw; height: 1.7vw; margin: 0.45vw auto; }
   .hr-v { font-size: 1vw; font-weight: 600; }
 
+  /* ---------- Webcam: el cielo de Barcelona ahora ---------- */
+  #webcam { width: 24vw; margin-top: 1.6vw; padding: 0.8vw; border-radius: 1.6vw; opacity: 0; transition: opacity 1s ease; }
+  #webcam.ready { opacity: 1; }
+  #cam-view { position: relative; display: block; width: 100%; padding-top: 56.25%; border-radius: 1vw; overflow: hidden; background: rgba(0,0,0,0.25); }
+  .cam-img { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity 1.2s ease; }
+  .cam-img.show { opacity: 1; }
+  .cam-info { display: flex; justify-content: space-between; align-items: baseline; margin: 0.6vw 0.3vw 0; }
+  #cam-name { font-size: 1vw; font-weight: 600; }
+  #cam-age { font-size: 0.85vw; font-weight: 500; color: var(--text-soft); }
+  #cam-credit { font-size: 0.7vw; color: var(--text-soft); margin: 0.25vw 0.3vw 0; }
+
   /* ---------- Iconos ---------- */
   #rows { position: fixed; left: 0; right: 0; bottom: 3.4vw; }
   .row { display: flex; justify-content: center; }
@@ -174,6 +185,11 @@
     <div>
       <div id="time">--:--</div>
       <div id="date"></div>
+      <div id="webcam" class="glass">
+        <a id="cam-view" href="https://www.windy.com/webcams" onclick="return false"><img class="cam-img" id="cam0" alt=""><img class="cam-img" id="cam1" alt=""></a>
+        <div class="cam-info"><span id="cam-name"></span><span id="cam-age"></span></div>
+        <div id="cam-credit">Webcams provided by Windy.com</div>
+      </div>
     </div>
     <div id="weather" class="glass">
       <div class="w-top">
@@ -200,6 +216,9 @@
 var BRIDGE = "http://127.0.0.1:8095";
 var WEATHER = { city: "Barcelona", lat: 41.3874, lon: 2.1686 };
 var PHOTO_SECONDS = 120;
+// Webcams de Windy que se alternan en la tarjeta (necesitan la clave de Windy en el puente)
+var WEBCAMS = [{ id: "1450823786", name: "Collserola" }, { id: "1450823411", name: "Port Olímpic" }];
+var WEBCAM_SECONDS = 30;
 
 // Posiciones en el menú Fuentes de la tele: 0 TV, 1 Apple TV, 2 barra de sonido, 3 Movistar, 4 USB
 var SRC_APPLETV = 1, SRC_MOVISTAR = 3, SRC_USB = 4;
@@ -279,6 +298,10 @@ function syncBridge(retries) {
     if (!s.hasCreds && storeGet("atvCreds")) {
       request("POST", "/config", { atvCreds: storeGet("atvCreds"), tvToken: storeGet("tvToken") || "" }, function () {});
     }
+    if (s.windyKey) storeSet("windyKey", s.windyKey);
+    if (!s.hasWindy && storeGet("windyKey")) {
+      request("POST", "/config", { windyKey: storeGet("windyKey") }, function () {});
+    }
   });
 }
 function rememberToken(data) { if (data && data.tvToken) storeSet("tvToken", data.tvToken); }
@@ -351,6 +374,48 @@ function weatherInfo(code, isDay) {
   if (code >= 95) return [ICONS.storm, "Tormenta"];
   return [ICONS.cloud, ""];
 }
+// ===================== Webcam =====================
+// Alterna las webcams cada WEBCAM_SECONDS con un fundido. Si una falla pasa a la siguiente;
+// si fallan todas, oculta la tarjeta y lo vuelve a intentar al cabo de un rato.
+var camIndex = -1, camSlot = 0, camFails = 0, camTimer = null;
+function ageText(iso) {
+  var t = iso ? Date.parse(iso) : NaN;
+  if (isNaN(t)) return "";
+  var min = Math.max(0, Math.round((Date.now() - t) / 60000));
+  return min < 1 ? "ahora" : min < 60 ? "hace " + min + " min" : "hace " + Math.round(min / 60) + " h";
+}
+function nextWebcam() {
+  clearTimeout(camTimer);
+  camIndex = (camIndex + 1) % WEBCAMS.length;
+  var cam = WEBCAMS[camIndex];
+  request("GET", "/webcam?id=" + cam.id, null, function (err, data) {
+    if (err || !data || !data.webcam) return webcamFailed();
+    var w = data.webcam, next = document.getElementById("cam" + (1 - camSlot)), prev = document.getElementById("cam" + camSlot);
+    next.onload = function () {
+      next.className = "cam-img show";
+      prev.className = "cam-img";
+      camSlot = 1 - camSlot;
+      camFails = 0;
+      document.getElementById("cam-name").textContent = cam.name;
+      document.getElementById("cam-age").textContent = ageText(w.updated);
+      document.getElementById("cam-view").href = w.link;
+      document.getElementById("webcam").className = "glass ready";
+      camTimer = setTimeout(nextWebcam, WEBCAM_SECONDS * 1000);
+    };
+    next.onerror = webcamFailed;
+    // Con la misma URL (caché de 5 min del puente) el navegador puede no volver a avisar de la carga
+    if (next.src === w.image && next.complete && next.naturalWidth) return next.onload();
+    next.src = w.image;
+  });
+}
+function webcamFailed() {
+  camFails++;
+  if (camFails < WEBCAMS.length) return nextWebcam();
+  document.getElementById("webcam").className = "glass";
+  camFails = 0;
+  camTimer = setTimeout(nextWebcam, 5 * 60 * 1000);
+}
+
 function updateWeather() {
   var url = "https://api.open-meteo.com/v1/forecast?latitude=" + WEATHER.lat + "&longitude=" + WEATHER.lon +
     "&current=temperature_2m,weather_code,is_day&hourly=temperature_2m,weather_code,is_day" +
@@ -500,6 +565,7 @@ updateClock();
 setInterval(updateClock, 1000);
 updateWeather();
 setInterval(updateWeather, 15 * 60 * 1000);
+setTimeout(nextWebcam, 3000); // tras syncBridge, que puede tener que reenviar la clave
 loadPhotos();
 syncBridge(10);
 </script>
