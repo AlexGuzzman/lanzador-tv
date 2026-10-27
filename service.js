@@ -2404,6 +2404,7 @@ return module.exports; })();
 //   GET  /tv/input?to=<entrada>  -> cambia directamente a tv/hdmi1..hdmi4 con Vetro (solo desde la tele)
 //   GET  /tv/settings            -> abre la Configuración de la tele con Vetro (solo desde la tele)
 //   GET  /webcam?id=<n>          -> imagen actual de una webcam de Windy (solo desde la tele)
+//   GET  /launcher?state=<s>     -> la interfaz avisa de si está cargada o se va a un módulo (solo desde la tele)
 'use strict';
 
 var G = this; // objeto global del contexto que crea TizenBrew para el servicio
@@ -2414,7 +2415,8 @@ var crypto = require('crypto');
 var os = require('os');
 
 var PORT = 8095;
-var config = { atvHost: '192.168.1.35', atvPort: 49153, atvCreds: '', tvHost: '127.0.0.1', tvPort: 8002, tvTls: true, tvToken: '', windyKey: '' };
+var config = { atvHost: '192.168.1.35', atvPort: 49153, atvCreds: '', tvHost: '127.0.0.1', tvPort: 8002, tvTls: true, tvToken: '', windyKey: '',
+  homeGuard: false };
 
 // La tele rechaza al instante las conexiones del mando que llegan por 127.0.0.1,
 // así que el puente se conecta a su propia IP de la red de casa.
@@ -2812,7 +2814,7 @@ var INPUT_KEYS = { tv: 'XF86DiscretSourceTV', hdmi1: 'XF86DiscretHDMI1', hdmi2: 
 function vetroPost(path, obj, what, done) {
   var body = JSON.stringify(obj);
   var finished = false;
-  function finish(err) { if (!finished) { finished = true; done(err); } }
+  function finish(err, d) { if (!finished) { finished = true; done(err, d); } }
   var req = http.request({ host: VETRO.host, port: VETRO.port, method: 'POST', path: path,
     headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } }, function (res) {
     var out = '';
@@ -2822,7 +2824,7 @@ function vetroPost(path, obj, what, done) {
       var d;
       try { d = JSON.parse(out); } catch (e) { return finish(new Error('respuesta de Vetro no válida')); }
       if (!d.ok) return finish(new Error('Vetro no pudo ' + what + (d.error ? ': ' + d.error : '')));
-      finish(null);
+      finish(null, d);
     });
   });
   req.setTimeout(10000, function () { req.abort(); finish(new Error('Vetro no responde')); });
@@ -2845,6 +2847,35 @@ function tvSettings(done) {
     done(err);
   });
 }
+
+// Home de Samsung -> nuestro lanzador, sin capturar el mando. El Home de Samsung (csfs) está siempre en
+// marcha en segundo plano (estado 4); al pulsar Home pasa a primer plano (2 o 3). Cada segundo se pregunta
+// a Vetro por su estado y, si está delante, se abre TizenBrew encima. Si TizenBrew no tiene el lanzador
+// cargado (por ejemplo, está en YouTube), se cierra antes para que arranque en él con su Auto launch.
+var HOME_APP = 'com.samsung.tv.csfs', BREW_APP = 'xvvl3S1bvH.TizenBrewStandalone';
+var HOME_STATUS_CMD = 'aul_test getallappstatus 2>&1 | grep -A3 "appid: ' + HOME_APP + '$" | grep status';
+var launcherLoaded = false, homeBusy = false, homeLastTakeover = 0, homeTimer = null;
+function checkHome() {
+  if (!config.homeGuard || homeBusy) return;
+  homeBusy = true;
+  vetroPost('/exec', { cmd: HOME_STATUS_CMD }, 'leer el estado del Home', function (err, d) {
+    var m = !err && d && /status:\s*(\d+)/.exec(d.output || '');
+    if (!m || (m[1] !== '2' && m[1] !== '3') || Date.now() - homeLastTakeover < 4000) { homeBusy = false; return; }
+    homeLastTakeover = Date.now();
+    var kill = launcherLoaded ? null : 'app_launcher -k ' + BREW_APP;
+    log('home: Home de Samsung delante, abriendo el lanzador' + (kill ? ' (reiniciando TizenBrew)' : ''));
+    function launch() {
+      vetroPost('/apps/launch', { appId: BREW_APP }, 'abrir TizenBrew', function (err2) {
+        if (err2) log('home: ' + err2.message);
+        homeBusy = false;
+      });
+    }
+    if (!kill) return launch();
+    vetroPost('/exec', { cmd: kill }, 'cerrar TizenBrew', function () { setTimeout(launch, 600); });
+  });
+}
+function startHomeGuard() { stopHomeGuard(); homeTimer = setInterval(checkHome, 1000); }
+function stopHomeGuard() { if (homeTimer) clearInterval(homeTimer); homeTimer = null; }
 
 // Webcams de Windy. La clave llega por POST /config y nunca está en el repositorio. Las URL de las
 // imágenes caducan a los 10 minutos en el plan gratuito, así que se piden de nuevo pasados 5.
@@ -2892,9 +2923,9 @@ function startServer() {
     var u = require('url').parse(req.url, true);
     if (req.method === 'OPTIONS') return reply(res, 204, {});
     if (u.pathname === '/status') {
-      return reply(res, 200, { ok: true, version: 13, atvHost: config.atvHost, tvHost: config.tvHost, hasCreds: !!config.atvCreds, tvToken: config.tvToken,
+      return reply(res, 200, { ok: true, version: 14, atvHost: config.atvHost, tvHost: config.tvHost, hasCreds: !!config.atvCreds, tvToken: config.tvToken,
         tvPort: config.tvPort, tvTls: config.tvTls, log: logLines, atvCreds: isLocal(req) ? config.atvCreds : undefined,
-        hasWindy: !!config.windyKey, windyKey: isLocal(req) ? config.windyKey : undefined });
+        hasWindy: !!config.windyKey, homeGuard: config.homeGuard, windyKey: isLocal(req) ? config.windyKey : undefined });
     }
     if (u.pathname === '/config' && req.method === 'POST') {
       var body = '';
@@ -2908,6 +2939,7 @@ function startServer() {
           if (c.tvToken !== undefined) config.tvToken = c.tvToken;
           if (c.tvPort) config.tvPort = c.tvPort;
           if (c.tvTls !== undefined) config.tvTls = !!c.tvTls;
+          if (c.homeGuard !== undefined) config.homeGuard = !!c.homeGuard;
           if (typeof c.windyKey === 'string' && /^[A-Za-z0-9]{0,64}$/.test(c.windyKey)) { config.windyKey = c.windyKey; webcamCache = {}; }
           reply(res, 200, { ok: true });
         } catch (e) { reply(res, 400, { ok: false, error: 'JSON no válido' }); }
@@ -2968,6 +3000,10 @@ function startServer() {
         });
       });
     }
+    if (u.pathname === '/launcher') {
+      launcherLoaded = u.query.state === 'loaded';
+      return reply(res, 200, { ok: true });
+    }
     if (u.pathname === '/webcam') {
       var camId = String(u.query.id || '');
       if (!/^[0-9]{6,12}$/.test(camId)) return reply(res, 400, { ok: false, error: 'id no válido' });
@@ -3015,6 +3051,7 @@ function selfUpdate(sha, done) {
       done(null);
       // Cerramos este servidor y arrancamos el nuevo código en un contexto limpio
       setTimeout(function () {
+        stopHomeGuard();
         currentServer.close();
         try { currentServer._handle && currentServer._handle.close(); } catch (e) {}
         setTimeout(function () {
@@ -3024,7 +3061,7 @@ function selfUpdate(sha, done) {
           sandbox.module = { exports: {} };
           sandbox.__lanzadorState = { config: config };
           try { vm.runInContext(code, vm.createContext(sandbox)); }
-          catch (e) { log('error al arrancar la versión nueva: ' + e.message); startServer(); }
+          catch (e) { log('error al arrancar la versión nueva: ' + e.message); startServer(); startHomeGuard(); }
         }, 500);
       }, 200);
     });
@@ -3039,8 +3076,10 @@ module.exports = {
   tvInput: tvInput,
   tvSettings: tvSettings,
   webcam: webcam,
+  checkHome: checkHome,
+  _home: function (v) { if (v !== undefined) launcherLoaded = v; return { launcherLoaded: launcherLoaded, busy: homeBusy }; },
   VETRO: VETRO,
   _test: { seal: seal, open: open, hkdf: hkdf, opackPack: opackPack, opackUnpack: opackUnpack }
 };
 
-if (typeof process === 'undefined' || !process.env || !process.env.LANZADOR_NO_SERVER) startServer();
+if (typeof process === 'undefined' || !process.env || !process.env.LANZADOR_NO_SERVER) { startServer(); startHomeGuard(); }

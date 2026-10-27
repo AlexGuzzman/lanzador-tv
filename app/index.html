@@ -298,6 +298,7 @@ function syncBridge(retries) {
     if (!s.hasCreds && storeGet("atvCreds")) {
       request("POST", "/config", { atvCreds: storeGet("atvCreds"), tvToken: storeGet("tvToken") || "" }, function () {});
     }
+    request("GET", "/launcher?state=loaded", null, function () {});
     if (s.windyKey) storeSet("windyKey", s.windyKey);
     if (!s.hasWindy && storeGet("windyKey")) {
       request("POST", "/config", { windyKey: storeGet("windyKey") }, function () {});
@@ -531,16 +532,24 @@ function launchModule(fullName) {
   if (typeof WebSocket === "undefined" || typeof tizen === "undefined") return;
   var ws;
   try { ws = new WebSocket("ws://localhost:8081"); } catch (e) { return toast("TizenBrew no responde"); }
-  ws.onopen = function () { ws.send(JSON.stringify({ type: 4, payload: false })); };
+  // TizenBrew carga su lista de módulos una vez al arrancar; si entonces falló (red aún no lista), la caché
+  // queda vacía. La primera petición pide recargarla (payload true), como hace su gestor de módulos.
+  var tries = 0;
+  function ask() { ws.send(JSON.stringify({ type: 4, payload: tries === 0 })); tries++; }
+  ws.onopen = ask;
   ws.onmessage = function (ev) {
     var data;
     try { data = JSON.parse(ev.data); } catch (e) { return; }
     if (data.type !== 4) return;
-    if (!data.payload) return setTimeout(function () { ws.send(JSON.stringify({ type: 4, payload: false })); }, 500);
+    if (!data.payload) {
+      if (tries >= 20) { ws.close(); return toast("TizenBrew no ha cargado sus módulos. Prueba desde su menú.", 5000); }
+      return setTimeout(ask, 500);
+    }
     var mdl = null;
     for (var i = 0; i < data.payload.length; i++) if (data.payload[i].fullName === fullName) mdl = data.payload[i];
     if (!mdl) return toast("No encuentro TizenTube en TizenBrew");
     for (var k = 0; k < (mdl.keys || []).length; k++) { try { tizen.tvinputdevice.registerKey(mdl.keys[k]); } catch (e) {} }
+    request("GET", "/launcher?state=module", null, function () {}); // el puente sabrá que hay que reiniciar TizenBrew
     ws.send(JSON.stringify({ type: 5, payload: mdl }));
     if (!mdl.evaluateScriptOnDocumentStart) setTimeout(function () { location.href = mdl.appPath; }, 150);
   };
@@ -568,6 +577,7 @@ setInterval(updateWeather, 15 * 60 * 1000);
 setTimeout(nextWebcam, 3000); // tras syncBridge, que puede tener que reenviar la clave
 loadPhotos();
 syncBridge(10);
+setInterval(function () { syncBridge(0); }, 5 * 60 * 1000);
 </script>
 </body>
 </html>

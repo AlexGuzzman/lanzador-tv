@@ -14,12 +14,15 @@ Lanzador con aspecto de tvOS para teles Samsung (Tizen) con [TizenBrew](https://
 | Ruta | Qué hace |
 |---|---|
 | `GET /status` | Estado del puente |
-| `POST /config` | Recibe `atvHost`, `atvCreds` (credenciales Companion de pyatv), `tvToken` y `windyKey` (clave gratuita de la API de webcams de Windy) |
+| `POST /config` | Recibe `atvHost`, `atvCreds` (credenciales Companion de pyatv), `tvToken`, `windyKey` (clave gratuita de la API de webcams de Windy) y `homeGuard` (Home de Samsung → lanzador, desactivado por defecto) |
 | `GET /atv/launch?id=<bundle>` | Abre una app en el Apple TV |
 | `GET /tv/source?pos=<n>` | Elige la entrada *n* del menú Fuentes de la tele |
 | `GET /tv/settings` | Abre la Configuración de la tele (`org.tizen.menu`) con Vetro |
+| `GET /launcher?state=loaded\|module` | La interfaz avisa de si el lanzador está cargado o se ha ido a otro módulo |
 | `GET /webcam?id=<n>` | Imagen actual de una webcam de [Windy](https://api.windy.com/webcams) (necesita `windyKey` en `POST /config`) |
 | `GET /tv/input?to=<entrada>` | Cambia directamente a `tv`, `hdmi1`…`hdmi4` (necesita [Vetro](https://github.com/andrearicci93/vetro) con root en el puerto 9000) |
+
+**Tecla Home.** El Home de Samsung (`com.samsung.tv.csfs`) está siempre en marcha en segundo plano. Cada segundo, el puente pregunta a Vetro si ha pasado a primer plano y, si es así, abre TizenBrew encima; si TizenBrew no tiene el lanzador cargado, lo cierra antes para que arranque en él. No captura el mando. Está desactivado por defecto; se activa con `POST /config {"homeGuard": true}`.
 
 Una app no puede cambiar de entrada en Tizen. Para eso el puente pide a Vetro, que corre con root en la propia tele, que pulse la tecla de entrada directa del sistema (`XF86DiscretHDMI3`, etc.). El puente solo acepta esas cinco entradas. Al abrir una app del Apple TV, el puente también cambia la tele a `hdmi1`.
 
