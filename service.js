@@ -2624,7 +2624,7 @@ function companionLaunch(bundleId, done) {
   var pub = fromU8(nacl.scalarMult.base(u8(priv)));
   var shared = null;
 
-  var timer = setTimeout(function () { finish(new Error('el Apple TV no responde')); }, 8000);
+  var timer = setTimeout(function () { finish(new Error('el Apple TV no responde')); }, 15000);
   function finish(err) {
     if (finished) return;
     finished = true;
@@ -2680,13 +2680,26 @@ function companionLaunch(bundleId, done) {
         var t2 = readTlv(msg2._pd || buf(0));
         if (t2[7]) return finish(new Error('el Apple TV rechazó las credenciales'));
         keys = { out: hkdf('', 'ClientEncrypt-main', shared), in: hkdf('', 'ServerEncrypt-main', shared) };
-        var launchXid = xid++;
-        send(FRAME.E_OPACK, { _i: '_launchApp', _t: 2, _c: { _bundleID: bundleId }, _x: launchXid });
-        expect(function (type3, msg3) {
-          if (msg3._t !== 3 || msg3._x !== launchXid) return; // eventos u otras respuestas
-          if (msg3._em) return finish(new Error(String(msg3._em)));
-          finish(null);
-        });
+        // "Despertar" enciende el Apple TV si estaba en reposo y "Inicio" hace que la tele
+        // cambie a su entrada por HDMI-CEC aunque ya estuviera encendido.
+        var steps = [
+          { i: '_hidC', c: { _hBtS: 2, _hidC: 13 }, wait: 1500 },
+          { i: '_hidC', c: { _hBtS: 1, _hidC: 7 }, wait: 80 },
+          { i: '_hidC', c: { _hBtS: 2, _hidC: 7 }, wait: 1200 }
+        ];
+        if (bundleId) steps.push({ i: '_launchApp', c: { _bundleID: bundleId }, wait: 0 });
+        var n = 0;
+        (function next() {
+          if (n >= steps.length) return finish(null);
+          var step = steps[n++], stepXid = xid++;
+          log('atv: ' + step.i + ' ' + JSON.stringify(step.c));
+          send(FRAME.E_OPACK, { _i: step.i, _t: 2, _c: step.c, _x: stepXid });
+          expect(function (type3, msg3) {
+            if (msg3._t !== 3 || msg3._x !== stepXid) return; // eventos u otras respuestas
+            if (msg3._em) return finish(new Error(String(msg3._em)));
+            setTimeout(next, step.wait);
+          });
+        })();
       });
     });
   });
@@ -2786,7 +2799,7 @@ function startServer() {
     var u = require('url').parse(req.url, true);
     if (req.method === 'OPTIONS') return reply(res, 204, {});
     if (u.pathname === '/status') {
-      return reply(res, 200, { ok: true, version: 3, atvHost: config.atvHost, tvHost: config.tvHost, hasCreds: !!config.atvCreds, tvToken: config.tvToken,
+      return reply(res, 200, { ok: true, version: 4, atvHost: config.atvHost, tvHost: config.tvHost, hasCreds: !!config.atvCreds, tvToken: config.tvToken,
         tvPort: config.tvPort, tvTls: config.tvTls, log: logLines, atvCreds: isLocal(req) ? config.atvCreds : undefined });
     }
     if (u.pathname === '/config' && req.method === 'POST') {
@@ -2806,7 +2819,19 @@ function startServer() {
       });
       return;
     }
+    if (u.pathname === '/debug/apps') {
+      try {
+        return tizen.application.getAppsInfo(function (list) {
+          reply(res, 200, { ok: true, apps: list.map(function (a) { return a.id + ' | ' + a.name; }) });
+        }, function (e) { reply(res, 500, { ok: false, error: String(e && e.message) }); });
+      } catch (e) { return reply(res, 500, { ok: false, error: String(e && e.message) }); }
+    }
     if (!isLocal(req)) return reply(res, 403, { ok: false, error: 'solo desde la tele' });
+    if (u.pathname === '/atv/show') {
+      return companionLaunch('', function (err) {
+        reply(res, err ? 500 : 200, err ? { ok: false, error: err.message } : { ok: true });
+      });
+    }
     if (u.pathname === '/atv/launch') {
       return companionLaunch(String(u.query.id || ''), function (err) {
         reply(res, err ? 500 : 200, err ? { ok: false, error: err.message } : { ok: true });

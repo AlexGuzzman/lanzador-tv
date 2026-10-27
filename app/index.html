@@ -438,12 +438,9 @@ function launch() {
     });
   }
   toast("Abriendo " + app.name + " en el Apple TV…", 6000);
+  // El puente despierta el Apple TV y pulsa Inicio: por HDMI-CEC la tele cambia sola a su entrada.
   request("GET", "/atv/launch?id=" + encodeURIComponent(app.id), null, function (err) {
-    if (err) return toast("No se pudo abrir " + app.name + ": " + err.message, 5000);
-    request("GET", "/tv/source?pos=" + SRC_APPLETV, null, function (err2, data) {
-      rememberToken(data);
-      if (err2) toast("Abierta en el Apple TV, pero no pude cambiar de entrada", 5000);
-    });
+    if (err) toast("No se pudo abrir " + app.name + ": " + err.message, 5000);
   });
 }
 
