@@ -592,23 +592,33 @@ function brewRunning(done) {
 //  4. Desde su página se abre el lanzador como al elegir "Inicio" en ese menú.
 function restartBrew(done) {
   launcherLoaded = false;
-  var deadline = Date.now() + 30000;
+  var deadline = Date.now() + 40000;
   function finish(msg) { if (msg) log('home: ' + msg); done(); }
-  brewSend([{ type: TB_LAUNCH_MODULE, payload: { fullName: '', name: '', appPath: '', moduleType: '', packageType: 'app', serviceFile: '' } }],
-    function (err) { if (err) log('home: ' + err.message); });
-  setTimeout(function () {
-    vetroPost('/exec', { cmd: 'app_launcher -t ' + BREW_APP }, 'cerrar TizenBrew', function () {
-      (function waitClosed(n) {
-        brewRunning(function (running) {
-          if (running && n < 10) return setTimeout(function () { waitClosed(n + 1); }, 500);
-          vetroPost('/apps/launch', { appId: BREW_APP }, 'abrir TizenBrew', function (err) {
-            if (err) return finish(err.message);
-            setTimeout(waitMenu, 1500);
-          });
+  vetroPost('/exec', { cmd: 'app_launcher -t ' + BREW_APP }, 'cerrar TizenBrew', function () {
+    log('home: cierre ordenado pedido');
+    (function waitClosed(n) {
+      brewRunning(function (running) {
+        if (running && n < 20) return setTimeout(function () { waitClosed(n + 1); }, 500);
+        log('home: TizenBrew ' + (running ? 'sigue abierto' : 'cerrado'));
+        waitSessionEnd(0);
+      });
+    })(0);
+  });
+  // El servicio de TizenBrew se entera unos segundos después de que su sesión de depuración ha terminado (y
+  // entonces olvida YouTube). Si se reabre antes, la interfaz cree que sigue en depuración y no la reactiva.
+  function waitSessionEnd(n) {
+    brewDebugStatus(function (err, st) {
+      if (!err && st.tizenDebug && n < 20) return setTimeout(function () { waitSessionEnd(n + 1); }, 500);
+      log('home: sesión de depuración ' + (err ? 'desconocida (' + err.message + ')' : st.tizenDebug ? 'sigue abierta' : 'terminada') + ' tras ' + (n / 2) + ' s');
+      setTimeout(function () {
+        vetroPost('/apps/launch', { appId: BREW_APP }, 'abrir TizenBrew', function (err2) {
+          if (err2) return finish(err2.message);
+          log('home: TizenBrew reabierto');
+          setTimeout(waitMenu, 1500);
         });
-      })(0);
+      }, 500);
     });
-  }, 400);
+  }
   // Espera a que TizenBrew esté en modo depuración con su menú; si el Auto launch no abre el lanzador, se abre
   var menuSeen = 0, openedAt = 0;
   function waitMenu() {
@@ -760,6 +770,13 @@ function startServer() {
       if (!/^[0-9a-f]{7,40}$/.test(sha)) return reply(res, 400, { ok: false, error: 'sha no válido' });
       return selfUpdate(sha, function (err) {
         reply(res, err ? 500 : 200, err ? { ok: false, error: err.message } : { ok: true, sha: sha });
+      });
+    }
+    if (u.pathname === '/debug/brew') {
+      return brewDebugStatus(function (err, st) {
+        brewInspector(function (err2, insp) {
+          reply(res, 200, { ok: true, debug: err ? err.message : st, page: err2 ? err2.message : insp.url, launcherLoaded: launcherLoaded });
+        });
       });
     }
     if (u.pathname === '/debug/meta') {
