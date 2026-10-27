@@ -421,7 +421,7 @@ function startServer() {
     var u = require('url').parse(req.url, true);
     if (req.method === 'OPTIONS') return reply(res, 204, {});
     if (u.pathname === '/status') {
-      return reply(res, 200, { ok: true, version: 7, atvHost: config.atvHost, tvHost: config.tvHost, hasCreds: !!config.atvCreds, tvToken: config.tvToken,
+      return reply(res, 200, { ok: true, version: 8, atvHost: config.atvHost, tvHost: config.tvHost, hasCreds: !!config.atvCreds, tvToken: config.tvToken,
         tvPort: config.tvPort, tvTls: config.tvTls, log: logLines, atvCreds: isLocal(req) ? config.atvCreds : undefined });
     }
     if (u.pathname === '/config' && req.method === 'POST') {
@@ -456,6 +456,24 @@ function startServer() {
       return selfUpdate(sha, function (err) {
         reply(res, err ? 500 : 200, err ? { ok: false, error: err.message } : { ok: true, sha: sha });
       });
+    }
+    // TEMPORAL: lectura de archivos de apps del sistema, solo desde el Mac del dueño y solo bajo /usr/apps/
+    if (u.pathname === '/debug/ls' || u.pathname === '/debug/strings') {
+      var from = (req.socket.remoteAddress || '').replace('::ffff:', '');
+      var target = require('path').normalize(String(u.query.path || ''));
+      if (from !== '192.168.1.37') return reply(res, 403, { ok: false, error: 'no permitido' });
+      if (target.indexOf('/usr/apps/') !== 0) return reply(res, 403, { ok: false, error: 'solo /usr/apps/' });
+      try {
+        var fs = require('fs');
+        if (u.pathname === '/debug/ls') return reply(res, 200, { ok: true, files: fs.readdirSync(target) });
+        var raw = fs.readFileSync(target).toString('latin1');
+        var re = new RegExp(String(u.query.re || '.'), 'i'), found = [], seen = {};
+        var parts = raw.match(/[\x20-\x7e]{4,}/g) || [];
+        for (var i = 0; i < parts.length && found.length < 400; i++) {
+          if (re.test(parts[i]) && !seen[parts[i]]) { seen[parts[i]] = 1; found.push(parts[i].slice(0, 200)); }
+        }
+        return reply(res, 200, { ok: true, size: raw.length, found: found });
+      } catch (e) { return reply(res, 500, { ok: false, error: e.message }); }
     }
     if (u.pathname === '/debug/meta') {
       try {
