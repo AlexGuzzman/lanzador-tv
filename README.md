@@ -30,6 +30,8 @@ Este repositorio **no contiene credenciales**. Se envían una vez desde la red l
 
 ## Desarrollo
 
+Para publicar una versión nueva: sube `version` en `package.json` (es la que muestra TizenBrew), ejecuta `./build.sh`, que la copia al puente, y etiqueta el commit como `vN`.
+
 `service.js` se genera con `./build.sh`, que junta `service/bridge.js` con [tweetnacl](https://github.com/dchest/tweetnacl-js) (dominio público). `node service/test-crypto.js` comprueba el cifrado contra el de Node.
 
 Los iconos son composiciones propias con los colores de cada servicio; las marcas pertenecen a sus dueños. Este proyecto no está afiliado a Samsung, Apple ni a ninguno de los servicios.

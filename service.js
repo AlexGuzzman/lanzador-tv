@@ -2415,6 +2415,7 @@ var crypto = require('crypto');
 var os = require('os');
 
 var PORT = 8095;
+var VERSION = '15.0.0';
 var config = { atvHost: '192.168.1.35', atvPort: 49153, atvCreds: '', tvHost: '127.0.0.1', tvPort: 8002, tvTls: true, tvToken: '', windyKey: '',
   homeGuard: false };
 
@@ -2923,7 +2924,7 @@ function startServer() {
     var u = require('url').parse(req.url, true);
     if (req.method === 'OPTIONS') return reply(res, 204, {});
     if (u.pathname === '/status') {
-      return reply(res, 200, { ok: true, version: 14, atvHost: config.atvHost, tvHost: config.tvHost, hasCreds: !!config.atvCreds, tvToken: config.tvToken,
+      return reply(res, 200, { ok: true, version: VERSION, atvHost: config.atvHost, tvHost: config.tvHost, hasCreds: !!config.atvCreds, tvToken: config.tvToken,
         tvPort: config.tvPort, tvTls: config.tvTls, log: logLines, atvCreds: isLocal(req) ? config.atvCreds : undefined,
         hasWindy: !!config.windyKey, homeGuard: config.homeGuard, windyKey: isLocal(req) ? config.windyKey : undefined });
     }
