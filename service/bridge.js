@@ -153,6 +153,7 @@ function opackPack(v) {
     var l2 = buf(2); l2.writeUInt16LE(v.length, 0);
     return concat([buf([0x92]), l2, v]);
   }
+  if (v && typeof v.__double === 'number') { var d = buf(9); d[0] = 0x36; d.writeDoubleLE(v.__double, 1); return d; }
   if (typeof v === 'number') {
     if (v < 0x28) return buf([v + 8]);
     if (v <= 0xff) return buf([0x30, v]);
@@ -289,6 +290,13 @@ function companionLaunch(bundleId, done) {
         // "Despertar" enciende el Apple TV si estaba en reposo y "Inicio" hace que la tele
         // cambie a su entrada por HDMI-CEC aunque ya estuviera encendido.
         var steps = [
+          // Sin una sesión de mando abierta, el Apple TV responde a los botones pero no los ejecuta
+          { i: '_systemInfo', c: { _bf: 0, _cf: 512, _clFl: 128, _i: clientId.toString('hex').slice(0, 12), _idsID: clientId,
+                                   _pubID: 'AA:BB:CC:DD:EE:FF', _sf: 256, _sv: '170.18', model: 'iPhone14,3', name: 'Lanzador' }, wait: 0 },
+          { i: '_touchStart', c: { _height: { __double: 1000 }, _tFl: 0, _width: { __double: 1000 } }, wait: 0 },
+          { i: '_sessionStart', c: { _srvT: 'com.apple.tvremoteservices', _sid: Math.floor(Math.random() * 4294967295) }, wait: 0 },
+          { i: 'TVRCSessionStart', c: { ProtocolVersionKey: '1.2' }, wait: 0, optional: true },
+          { i: '_tiStart', c: {}, wait: 0, optional: true },
           { i: '_hidC', c: { _hBtS: 2, _hidC: 13 }, wait: 1500 },
           { i: '_hidC', c: { _hBtS: 1, _hidC: 7 }, wait: 80 },
           { i: '_hidC', c: { _hBtS: 2, _hidC: 7 }, wait: 1200 }
@@ -302,7 +310,8 @@ function companionLaunch(bundleId, done) {
           send(FRAME.E_OPACK, { _i: step.i, _t: 2, _c: step.c, _x: stepXid });
           expect(function (type3, msg3) {
             if (msg3._t !== 3 || msg3._x !== stepXid) return; // eventos u otras respuestas
-            if (msg3._em) return finish(new Error(String(msg3._em)));
+            if (msg3._em && !step.optional) return finish(new Error(String(msg3._em)));
+            if (msg3._em) log('atv: ' + step.i + ' rechazado: ' + msg3._em);
             setTimeout(next, step.wait);
           });
         })();
@@ -405,7 +414,7 @@ function startServer() {
     var u = require('url').parse(req.url, true);
     if (req.method === 'OPTIONS') return reply(res, 204, {});
     if (u.pathname === '/status') {
-      return reply(res, 200, { ok: true, version: 4, atvHost: config.atvHost, tvHost: config.tvHost, hasCreds: !!config.atvCreds, tvToken: config.tvToken,
+      return reply(res, 200, { ok: true, version: 6, atvHost: config.atvHost, tvHost: config.tvHost, hasCreds: !!config.atvCreds, tvToken: config.tvToken,
         tvPort: config.tvPort, tvTls: config.tvTls, log: logLines, atvCreds: isLocal(req) ? config.atvCreds : undefined });
     }
     if (u.pathname === '/config' && req.method === 'POST') {
@@ -430,6 +439,30 @@ function startServer() {
         return tizen.application.getAppsInfo(function (list) {
           reply(res, 200, { ok: true, apps: list.map(function (a) { return a.id + ' | ' + a.name; }) });
         }, function (e) { reply(res, 500, { ok: false, error: String(e && e.message) }); });
+      } catch (e) { return reply(res, 500, { ok: false, error: String(e && e.message) }); }
+    }
+    // Exploración de apps internas de la tele (solo abre apps, no ejecuta código arbitrario)
+    if (u.pathname === '/debug/meta') {
+      try {
+        var info = tizen.application.getAppInfo(String(u.query.app));
+        var meta = [];
+        try { meta = tizen.application.getAppMetaData(String(u.query.app)).map(function (m) { return m.key + '=' + m.value; }); } catch (e) { meta = ['(sin metadatos: ' + e.message + ')']; }
+        return reply(res, 200, { ok: true, info: { id: info.id, name: info.name, packageId: info.packageId, show: info.show, categories: info.categories }, meta: meta });
+      } catch (e) { return reply(res, 500, { ok: false, error: String(e && e.message) }); }
+    }
+    if (u.pathname === '/debug/launch') {
+      try {
+        var data = [];
+        if (u.query.data) {
+          var obj = JSON.parse(String(u.query.data));
+          for (var k in obj) data.push(new tizen.ApplicationControlData(k, [String(obj[k])]));
+        }
+        var ctrl = new tizen.ApplicationControl(String(u.query.op || 'http://tizen.org/appcontrol/operation/default'),
+          u.query.uri ? String(u.query.uri) : null, null, null, data);
+        log('debug: launchAppControl ' + u.query.app + ' ' + (u.query.data || ''));
+        return tizen.application.launchAppControl(ctrl, u.query.app ? String(u.query.app) : null,
+          function () { reply(res, 200, { ok: true }); },
+          function (e) { reply(res, 500, { ok: false, error: String(e && e.message) }); });
       } catch (e) { return reply(res, 500, { ok: false, error: String(e && e.message) }); }
     }
     if (!isLocal(req)) return reply(res, 403, { ok: false, error: 'solo desde la tele' });
