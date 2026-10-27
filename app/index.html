@@ -214,10 +214,11 @@ var APPLE_SHAPE = '<svg viewBox="0 0 30 36"><defs><linearGradient id="ag" x1="0"
 var TWITCH_ICON = '<svg viewBox="0 0 24 26"><path d="M4 2h17v11.5l-5 5h-4l-3 3v-3H4z" fill="#fff"/><path d="M11 6.5v5M16 6.5v5" stroke="#9146ff" stroke-width="2.2" stroke-linecap="round"/></svg>';
 var PLEX_X = '<svg viewBox="0 0 10 13"><path d="M1 0h4l4.5 6.5L5 13H1l4.5-6.5z" fill="#e5a00d"/></svg>';
 
-// type: "atv" abre una app del Apple TV, "src" cambia de entrada, "module" abre un módulo de TizenBrew
+// type: "atv" abre una app del Apple TV, "input" cambia directamente de entrada (con Vetro),
+// "src" elige una entrada del menú Fuentes, "module" abre un módulo de TizenBrew
 var ROWS = [
   [
-    { name: "Movistar+ Deportes", cls: "t-mov-sp",  type: "src", pos: SRC_MOVISTAR,           html: "<b>M+</b><small>Deportes</small>", sub: "Canales en directo en el descodificador", badge: "EN DIRECTO" },
+    { name: "Movistar+ Deportes", cls: "t-mov-sp",  type: "input", to: "hdmi3",           html: "<b>M+</b><small>Deportes</small>", sub: "Canales en directo en el descodificador", badge: "EN DIRECTO" },
     { name: "Movistar+ Movies",   cls: "t-mov",     type: "atv", id: "com.prisatv.yomvi",     html: "<b>M+</b><small>Movies</small>", sub: "Series y películas en el Apple TV" },
     { name: "Netflix",            cls: "t-netflix", type: "atv", id: "com.netflix.Netflix",   html: "<b>NETFLIX</b>" },
     { name: "HBO Max",            cls: "t-hbo",     type: "atv", id: "com.wbd.stream",        html: "<div><b>HBO</b><em>max</em></div>" },
@@ -430,6 +431,12 @@ function launch() {
   el.className += " pressed";
   setTimeout(function () { el.className = el.className.replace(" pressed", ""); }, 180);
   if (app.type === "module") { toast("Abriendo " + app.name + "…"); return launchModule(app.module); }
+  if (app.type === "input") {
+    toast("Cambiando a " + app.name + "…", 4000);
+    return request("GET", "/tv/input?to=" + app.to, null, function (err) {
+      if (err) toast("No se pudo cambiar de entrada: " + err.message, 5000);
+    });
+  }
   if (app.type === "src") {
     toast("Cambiando a " + app.name + "…", 6000);
     return request("GET", "/tv/source?pos=" + app.pos, null, function (err, data) {
@@ -438,7 +445,7 @@ function launch() {
     });
   }
   toast("Abriendo " + app.name + " en el Apple TV…", 6000);
-  // El puente despierta el Apple TV y pulsa Inicio: por HDMI-CEC la tele cambia sola a su entrada.
+  // El puente abre la app en el Apple TV (lo despierta si dormía) y cambia la tele a HDMI1 con Vetro.
   request("GET", "/atv/launch?id=" + encodeURIComponent(app.id), null, function (err) {
     if (err) toast("No se pudo abrir " + app.name + ": " + err.message, 5000);
   });
