@@ -23,7 +23,7 @@ var os = require('os');
 var PORT = 8095;
 var VERSION = '0.0.0'; // build.sh pone aquí la versión de package.json
 var config = { atvHost: '192.168.1.35', atvPort: 49153, atvCreds: '', tvHost: '127.0.0.1', tvPort: 8002, tvTls: true, tvToken: '', windyKey: '',
-  homeGuard: false, homeKey: false };
+  homeGuard: false, homeKey: true };
 
 // La tele rechaza al instante las conexiones del mando que llegan por 127.0.0.1,
 // así que el puente se conecta a su propia IP de la red de casa.
@@ -458,8 +458,7 @@ function tvSettings(done) {
 // Tecla Home -> nuestro lanzador. YouTube (TizenTube) se ejecuta dentro de TizenBrew, igual que el lanzador,
 // así que "abrir TizenBrew" no basta para volver: hay que cerrarlo para que arranque en el lanzador con su
 // Auto launch. Hay dos formas de enterarse de que se ha pulsado Home:
-//  - homeKey (desactivado por defecto: cerrar TizenBrew a la fuerza deja colgada su sesión de depuración y
-//    la tele puede no dejar reabrirlo hasta desenchufarla): Vetro intercepta Home (su Remapper abre TizenBrew) y apunta cada pulsación en
+//  - homeKey (por defecto): Vetro intercepta Home (su Remapper abre TizenBrew) y apunta cada pulsación en
 //    GET /input. Si el lanzador no está cargado, se reinicia TizenBrew.
 //  - homeGuard (opcional, sin interceptar el mando): el Home de Samsung (csfs), siempre en segundo plano
 //    (estado 4), pasa a primer plano (2 o 3); entonces se abre TizenBrew encima.
@@ -478,64 +477,159 @@ function vetroGet(path, done) {
   req.setTimeout(5000, function () { req.abort(); finish(new Error('Vetro no responde')); });
   req.on('error', function (e) { finish(e); });
 }
-// Mensajes al servicio de TizenBrew por su canal interno (ws://127.0.0.1:8081), como su propia interfaz
-var TB_LAUNCH_MODULE = 5, TB_RELAUNCH_IN_DEBUG = 3;
-function brewSend(messages, done) {
-  var sock = net.connect({ host: '127.0.0.1', port: 8081 }), data = '', sent = false, finished = false;
-  var timer = setTimeout(function () { finish(new Error('TizenBrew no responde')); }, 5000);
-  function finish(err) {
+// Cliente WebSocket mínimo (texto): para el canal interno de TizenBrew y para el inspector de su página
+function wsOpen(port, path, onMessage, done) {
+  var sock = net.connect({ host: '127.0.0.1', port: port }), data = buf(0), upgraded = false, finished = false;
+  var timer = setTimeout(function () { fail(new Error('sin respuesta en el puerto ' + port)); }, 5000);
+  function fail(err) {
     if (finished) return;
     finished = true;
     clearTimeout(timer);
-    try { sock.end(); } catch (e) {}
-    done(err || null);
+    try { sock.destroy(); } catch (e) {}
+    done(err);
   }
-  function frame(txt) {
-    var payload = buf(txt), mask = crypto.randomBytes(4), header;
-    if (payload.length < 126) header = buf([0x81, 0x80 | payload.length]);
-    else { header = buf(4); header[0] = 0x81; header[1] = 0x80 | 126; header.writeUInt16BE(payload.length, 2); }
-    for (var i = 0; i < payload.length; i++) payload[i] ^= mask[i % 4];
-    return concat([header, mask, payload]);
-  }
-  sock.on('error', function (e) { finish(e); });
+  var ws = {
+    send: function (obj) {
+      var payload = buf(JSON.stringify(obj)), mask = crypto.randomBytes(4), header;
+      if (payload.length < 126) header = buf([0x81, 0x80 | payload.length]);
+      else { header = buf(4); header[0] = 0x81; header[1] = 0x80 | 126; header.writeUInt16BE(payload.length, 2); }
+      for (var i = 0; i < payload.length; i++) payload[i] ^= mask[i % 4];
+      sock.write(concat([header, mask, payload]));
+    },
+    close: function () { finished = true; clearTimeout(timer); try { sock.end(); } catch (e) {} }
+  };
+  sock.on('error', function (e) { fail(e); });
   sock.on('connect', function () {
-    sock.write('GET / HTTP/1.1\r\nHost: 127.0.0.1:8081\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n' +
+    sock.write('GET ' + path + ' HTTP/1.1\r\nHost: 127.0.0.1:' + port + '\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n' +
       'Sec-WebSocket-Key: ' + crypto.randomBytes(16).toString('base64') + '\r\nSec-WebSocket-Version: 13\r\n\r\n');
   });
   sock.on('data', function (chunk) {
-    if (sent) return;
-    data += chunk.toString('binary');
-    if (data.indexOf('\r\n\r\n') < 0) return;
-    if (!/^HTTP\/1\.1 101/.test(data)) return finish(new Error('TizenBrew rechazó la conexión'));
-    sent = true;
-    for (var i = 0; i < messages.length; i++) sock.write(frame(JSON.stringify(messages[i])));
-    setTimeout(function () { finish(null); }, 300);
+    data = concat([data, chunk]);
+    if (!upgraded) {
+      var head = data.toString('binary'), end = head.indexOf('\r\n\r\n');
+      if (end < 0) return;
+      if (!/^HTTP\/1\.1 101/.test(head)) return fail(new Error('conexión rechazada en el puerto ' + port));
+      upgraded = true;
+      clearTimeout(timer);
+      data = data.slice(end + 4);
+      done(null, ws);
+    }
+    while (data.length >= 2) {
+      var len = data[1] & 0x7f, off = 2;
+      if (len === 126) { if (data.length < 4) return; len = data.readUInt16BE(2); off = 4; }
+      else if (len === 127) { if (data.length < 10) return; len = data.readUInt32BE(6); off = 10; }
+      if (data.length < off + len) return;
+      var text = data.slice(off, off + len).toString('utf8');
+      data = data.slice(off + len);
+      try { onMessage(JSON.parse(text)); } catch (e) {}
+    }
   });
 }
-// Volver al lanzador reiniciando TizenBrew. Cerrarlo sin más no basta: su servicio sigue creyendo que la app
-// está en modo depuración (el que le deja inyectar módulos) y, al reabrirse, la interfaz se salta el Auto
-// launch y muestra su inicio. Se hace lo mismo que su interfaz al reiniciarse: un módulo vacío de tipo app
-// (borra el modo depuración y olvida YouTube), pedir que la reabra en modo depuración y cerrar la app.
-// El servicio la reabre al segundo y lanza el Auto launch, es decir, el lanzador.
+// Mensajes al servicio de TizenBrew por su canal interno (ws://127.0.0.1:8081), como su propia interfaz
+var TB_DEBUG_STATUS = 1, TB_LAUNCH_MODULE = 5;
+function brewSend(messages, done) {
+  wsOpen(8081, '/', function () {}, function (err, ws) {
+    if (err) return done(err);
+    for (var i = 0; i < messages.length; i++) ws.send(messages[i]);
+    setTimeout(function () { ws.close(); done(null); }, 300);
+  });
+}
+function brewDebugStatus(done) {
+  var answered = false;
+  wsOpen(8081, '/', function (m) {
+    if (m.type !== TB_DEBUG_STATUS || answered) return;
+    answered = true;
+    done(null, m.payload || {});
+  }, function (err, ws) {
+    if (err) return done(err);
+    ws.send({ type: TB_DEBUG_STATUS });
+    setTimeout(function () { ws.close(); if (!answered) { answered = true; done(new Error('TizenBrew no contesta')); } }, 1500);
+  });
+}
+// Puerto del inspector de la página de TizenBrew (cambia en cada arranque) y la página que muestra
+function brewInspector(done) {
+  vetroPost('/exec', { cmd: 'netstat -tlnp 2>/dev/null | grep "' + BREW_APP.slice(0, 14) + '"' }, 'buscar el inspector', function (err, d) {
+    var m = !err && d && /:(\d+)\s+0\.0\.0\.0:\*\s+LISTEN/.exec(d.output || '');
+    if (!m) return done(new Error('TizenBrew sin inspector'));
+    var port = +m[1];
+    http.get({ host: '127.0.0.1', port: port, path: '/json' }, function (res) {
+      var out = '';
+      res.setEncoding('utf8');
+      res.on('data', function (c) { out += c; });
+      res.on('end', function () {
+        var pages;
+        try { pages = JSON.parse(out).filter(function (t) { return t.type === 'page'; }); } catch (e) { return done(new Error('inspector no válido')); }
+        if (!pages.length) return done(new Error('inspector sin página'));
+        done(null, { port: port, url: pages[0].url, path: pages[0].webSocketDebuggerUrl.replace(/^ws:\/\/[^/]+/, '') });
+      });
+    }).on('error', function (e) { done(e); });
+  });
+}
+// Lo mismo que pulsar "Inicio" en el menú de TizenBrew: avisar a su servicio y navegar a la página del módulo
+var OPEN_LAUNCHER = '(function(){var ws=new WebSocket("ws://localhost:8081"),ok=false;' +
+  'ws.onopen=function(){ws.send(JSON.stringify({type:4,payload:true}));};' +
+  'ws.onmessage=function(e){var d=JSON.parse(e.data);if(d.type!==4||ok||!d.payload)return;' +
+  'var m=d.payload.filter(function(x){return /lanzador-tv/.test(x.fullName);})[0];if(!m)return;ok=true;' +
+  'ws.send(JSON.stringify({type:5,payload:m}));setTimeout(function(){location.href=m.appPath;},300);};' +
+  'return "ok";})()';
+function brewOpenLauncher(insp, done) {
+  wsOpen(insp.port, insp.path, function () {}, function (err, ws) {
+    if (err) return done(err);
+    ws.send({ id: 1, method: 'Runtime.evaluate', params: { expression: OPEN_LAUNCHER } });
+    setTimeout(function () { ws.close(); done(null); }, 300);
+  });
+}
+function brewRunning(done) {
+  vetroPost('/exec', { cmd: 'aul_test getallappstatus 2>&1 | grep -A3 "appid: ' + BREW_APP + '$" | grep status' }, 'leer el estado de TizenBrew',
+    function (err, d) { done(!err && d && /status:\s*\d/.test(d.output || '')); });
+}
+// Volver al lanzador desde un módulo (YouTube), que se ejecuta dentro de la misma app TizenBrew.
+// Cerrar la app a la fuerza (app_launcher -k) deja colgada su sesión de depuración y la tele puede no dejar
+// reabrirla hasta desenchufarla. Comprobado en la tele:
+//  1. Un módulo vacío de tipo app hace que el servicio de TizenBrew olvide YouTube (no lo vuelve a inyectar).
+//  2. app_launcher -t la cierra de forma ordenada, y la sesión de depuración se cierra bien.
+//  3. Reabierta con Vetro, vuelve en modo depuración pero se queda en su menú (el Auto launch no llega).
+//  4. Desde su página se abre el lanzador como al elegir "Inicio" en ese menú.
 function restartBrew(done) {
   launcherLoaded = false;
-  brewSend([
-    { type: TB_LAUNCH_MODULE, payload: { fullName: '', name: '', appPath: '', moduleType: '', packageType: 'app', serviceFile: '' } },
-    { type: TB_RELAUNCH_IN_DEBUG, payload: { tvIP: lanAddress() } }
-  ], function (err) {
-    if (err) log('home: ' + err.message);
-    vetroPost('/exec', { cmd: 'app_launcher -k ' + BREW_APP }, 'cerrar TizenBrew', function (err2) {
-      if (err2) log('home: ' + err2.message);
-      if (!err) return done();
-      // Sin el canal de TizenBrew nadie la reabriría: se abre a través de Vetro (sin Auto launch garantizado)
-      setTimeout(function () {
-        vetroPost('/apps/launch', { appId: BREW_APP }, 'abrir TizenBrew', function (err3) {
-          if (err3) log('home: ' + err3.message);
-          done();
+  var deadline = Date.now() + 30000;
+  function finish(msg) { if (msg) log('home: ' + msg); done(); }
+  brewSend([{ type: TB_LAUNCH_MODULE, payload: { fullName: '', name: '', appPath: '', moduleType: '', packageType: 'app', serviceFile: '' } }],
+    function (err) { if (err) log('home: ' + err.message); });
+  setTimeout(function () {
+    vetroPost('/exec', { cmd: 'app_launcher -t ' + BREW_APP }, 'cerrar TizenBrew', function () {
+      (function waitClosed(n) {
+        brewRunning(function (running) {
+          if (running && n < 10) return setTimeout(function () { waitClosed(n + 1); }, 500);
+          vetroPost('/apps/launch', { appId: BREW_APP }, 'abrir TizenBrew', function (err) {
+            if (err) return finish(err.message);
+            setTimeout(waitMenu, 1500);
+          });
         });
-      }, 600);
+      })(0);
     });
-  });
+  }, 400);
+  // Espera a que TizenBrew esté en modo depuración con su menú; si el Auto launch no abre el lanzador, se abre
+  var menuSeen = 0, openedAt = 0;
+  function waitMenu() {
+    if (launcherLoaded) return finish(openedAt ? 'lanzador abierto desde el menú de TizenBrew' : 'lanzador abierto');
+    if (Date.now() > deadline) return finish('TizenBrew no ha vuelto al lanzador a tiempo');
+    // Ya se pidió abrir "Inicio": se espera a que el lanzador avise (/launcher?state=loaded) y, si no, se repite
+    if (openedAt && Date.now() - openedAt < 6000) return setTimeout(waitMenu, 500);
+    brewDebugStatus(function (err, st) {
+      if (err || !st.tizenDebug) return setTimeout(waitMenu, 1000);
+      brewInspector(function (err2, insp) {
+        if (err2 || insp.url.indexOf('tizenbrew-ui') < 0) return setTimeout(waitMenu, 1000);
+        if (++menuSeen < 2) return setTimeout(waitMenu, 1000);   // un segundo de margen por si llega el Auto launch
+        if (launcherLoaded) return finish('lanzador abierto');
+        brewOpenLauncher(insp, function (err3) {
+          if (err3) log('home: ' + err3.message);
+          else openedAt = Date.now();
+          setTimeout(waitMenu, 500);
+        });
+      });
+    });
+  }
 }
 function takeOver(reason, kill, done) {
   homeLastTakeover = Date.now();
@@ -787,6 +881,9 @@ module.exports = {
   homeTick: homeTick,
   restartBrew: restartBrew,
   brewSend: brewSend,
+  brewDebugStatus: brewDebugStatus,
+  brewInspector: brewInspector,
+  wsOpen: wsOpen,
   _home: function (v) { if (v !== undefined) launcherLoaded = v; return { launcherLoaded: launcherLoaded, busy: homeBusy }; },
   VETRO: VETRO,
   _test: { seal: seal, open: open, hkdf: hkdf, opackPack: opackPack, opackUnpack: opackUnpack }

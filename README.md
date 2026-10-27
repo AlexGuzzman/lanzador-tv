@@ -15,7 +15,7 @@ Lanzador con aspecto de tvOS para teles Samsung (Tizen) con [TizenBrew](https://
 | Ruta | Qué hace |
 |---|---|
 | `GET /status` | Estado del puente |
-| `POST /config` | Recibe `atvHost`, `atvCreds` (credenciales Companion de pyatv), `tvToken`, `windyKey` (clave gratuita de la API de webcams de Windy) `homeGuard` (Home de Samsung → lanzador, desactivado por defecto) y `homeKey` (volver al lanzador desde YouTube con Home, en pruebas, desactivado por defecto) |
+| `POST /config` | Recibe `atvHost`, `atvCreds` (credenciales Companion de pyatv), `tvToken`, `windyKey` (clave gratuita de la API de webcams de Windy) `homeGuard` (Home de Samsung → lanzador, desactivado por defecto) y `homeKey` (volver al lanzador desde YouTube con Home, activado por defecto) |
 | `GET /atv/launch?id=<bundle>` | Abre una app en el Apple TV |
 | `GET /tv/source?pos=<n>` | Elige la entrada *n* del menú Fuentes de la tele |
 | `GET /tv/settings` | Abre la Configuración de la tele (`org.tizen.menu`) con Vetro |
@@ -23,7 +23,7 @@ Lanzador con aspecto de tvOS para teles Samsung (Tizen) con [TizenBrew](https://
 | `GET /webcam?id=<n>` | Imagen actual de una webcam de [Windy](https://api.windy.com/webcams) (necesita `windyKey` en `POST /config`) |
 | `GET /tv/input?to=<entrada>` | Cambia directamente a `tv`, `hdmi1`…`hdmi4` (necesita [Vetro](https://github.com/andrearicci93/vetro) con root en el puerto 9000) |
 
-**Tecla Home y YouTube.** YouTube (TizenTube) se ejecuta dentro de TizenBrew, igual que el lanzador, así que abrir TizenBrew no basta para volver. Con la interceptación de Vetro (su Remapper abre TizenBrew al pulsar Home), el puente consulta cada segundo las pulsaciones que Vetro apunta en `GET /input`; si se pulsa Home y el lanzador no está cargado, reinicia TizenBrew como lo hace su propia interfaz (`homeKey`, **desactivado por defecto**: cerrar TizenBrew a la fuerza deja colgada su sesión de depuración y la tele puede no dejar reabrirlo hasta desenchufarla): por su canal interno (`ws://127.0.0.1:8081`) le envía un módulo vacío de tipo `app`, que borra su modo depuración y olvida YouTube, y la orden de reabrirse en modo depuración; después cierra la app. El servicio de TizenBrew la reabre y lanza el *Auto launch*. Cerrarla sin más no basta: la interfaz se saltaría el *Auto launch*.
+**Tecla Home y YouTube.** YouTube (TizenTube) se ejecuta dentro de TizenBrew, igual que el lanzador, así que abrir TizenBrew no basta para volver. Con la interceptación de Vetro (su Remapper abre TizenBrew al pulsar Home), el puente consulta cada segundo las pulsaciones que Vetro apunta en `GET /input`. Si se pulsa Home y el lanzador no está cargado (`homeKey`, activado por defecto): pide al servicio de TizenBrew que olvide el módulo (módulo vacío de tipo `app` por `ws://127.0.0.1:8081`), cierra la app de forma ordenada (`app_launcher -t`; cerrarla a la fuerza con `-k` deja colgada su sesión de depuración), la reabre con Vetro y, si el *Auto launch* no llega, abre el lanzador desde la página de TizenBrew por su inspector, igual que al elegir "Inicio" en su menú. Tarda unos 5 o 6 segundos.
 
 **Alternativa sin interceptar el mando.** El Home de Samsung (`com.samsung.tv.csfs`) está siempre en marcha en segundo plano. Cada segundo, el puente pregunta a Vetro si ha pasado a primer plano y, si es así, abre TizenBrew encima; si TizenBrew no tiene el lanzador cargado, lo cierra antes para que arranque en él. No captura el mando. Está desactivado por defecto; se activa con `POST /config {"homeGuard": true}`.
 
