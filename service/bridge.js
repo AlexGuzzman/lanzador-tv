@@ -477,18 +477,73 @@ function vetroGet(path, done) {
   req.setTimeout(5000, function () { req.abort(); finish(new Error('Vetro no responde')); });
   req.on('error', function (e) { finish(e); });
 }
+// Mensajes al servicio de TizenBrew por su canal interno (ws://127.0.0.1:8081), como su propia interfaz
+var TB_LAUNCH_MODULE = 5, TB_RELAUNCH_IN_DEBUG = 3;
+function brewSend(messages, done) {
+  var sock = net.connect({ host: '127.0.0.1', port: 8081 }), data = '', sent = false, finished = false;
+  var timer = setTimeout(function () { finish(new Error('TizenBrew no responde')); }, 5000);
+  function finish(err) {
+    if (finished) return;
+    finished = true;
+    clearTimeout(timer);
+    try { sock.end(); } catch (e) {}
+    done(err || null);
+  }
+  function frame(txt) {
+    var payload = buf(txt), mask = crypto.randomBytes(4), header;
+    if (payload.length < 126) header = buf([0x81, 0x80 | payload.length]);
+    else { header = buf(4); header[0] = 0x81; header[1] = 0x80 | 126; header.writeUInt16BE(payload.length, 2); }
+    for (var i = 0; i < payload.length; i++) payload[i] ^= mask[i % 4];
+    return concat([header, mask, payload]);
+  }
+  sock.on('error', function (e) { finish(e); });
+  sock.on('connect', function () {
+    sock.write('GET / HTTP/1.1\r\nHost: 127.0.0.1:8081\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n' +
+      'Sec-WebSocket-Key: ' + crypto.randomBytes(16).toString('base64') + '\r\nSec-WebSocket-Version: 13\r\n\r\n');
+  });
+  sock.on('data', function (chunk) {
+    if (sent) return;
+    data += chunk.toString('binary');
+    if (data.indexOf('\r\n\r\n') < 0) return;
+    if (!/^HTTP\/1\.1 101/.test(data)) return finish(new Error('TizenBrew rechazó la conexión'));
+    sent = true;
+    for (var i = 0; i < messages.length; i++) sock.write(frame(JSON.stringify(messages[i])));
+    setTimeout(function () { finish(null); }, 300);
+  });
+}
+// Volver al lanzador reiniciando TizenBrew. Cerrarlo sin más no basta: su servicio sigue creyendo que la app
+// está en modo depuración (el que le deja inyectar módulos) y, al reabrirse, la interfaz se salta el Auto
+// launch y muestra su inicio. Se hace lo mismo que su interfaz al reiniciarse: un módulo vacío de tipo app
+// (borra el modo depuración y olvida YouTube), pedir que la reabra en modo depuración y cerrar la app.
+// El servicio la reabre al segundo y lanza el Auto launch, es decir, el lanzador.
+function restartBrew(done) {
+  launcherLoaded = false;
+  brewSend([
+    { type: TB_LAUNCH_MODULE, payload: { fullName: '', name: '', appPath: '', moduleType: '', packageType: 'app', serviceFile: '' } },
+    { type: TB_RELAUNCH_IN_DEBUG, payload: { tvIP: lanAddress() } }
+  ], function (err) {
+    if (err) log('home: ' + err.message);
+    vetroPost('/exec', { cmd: 'app_launcher -k ' + BREW_APP }, 'cerrar TizenBrew', function (err2) {
+      if (err2) log('home: ' + err2.message);
+      if (!err) return done();
+      // Sin el canal de TizenBrew nadie la reabriría: se abre a través de Vetro (sin Auto launch garantizado)
+      setTimeout(function () {
+        vetroPost('/apps/launch', { appId: BREW_APP }, 'abrir TizenBrew', function (err3) {
+          if (err3) log('home: ' + err3.message);
+          done();
+        });
+      }, 600);
+    });
+  });
+}
 function takeOver(reason, kill, done) {
   homeLastTakeover = Date.now();
   log('home: ' + reason + (kill ? ', reiniciando TizenBrew' : ', abriendo el lanzador'));
-  function launch() {
-    vetroPost('/apps/launch', { appId: BREW_APP }, 'abrir TizenBrew', function (err) {
-      if (err) log('home: ' + err.message);
-      done();
-    });
-  }
-  if (!kill) return launch();
-  launcherLoaded = false;
-  vetroPost('/exec', { cmd: 'app_launcher -k ' + BREW_APP }, 'cerrar TizenBrew', function () { setTimeout(launch, 600); });
+  if (kill) return restartBrew(done);
+  vetroPost('/apps/launch', { appId: BREW_APP }, 'abrir TizenBrew', function (err) {
+    if (err) log('home: ' + err.message);
+    done();
+  });
 }
 function checkHome(done) {
   vetroPost('/exec', { cmd: HOME_STATUS_CMD }, 'leer el estado del Home', function (err, d) {
@@ -506,12 +561,13 @@ function checkHomeKey(done) {
       var t = e.time_seconds * 1000 + Math.floor((e.time_microseconds || 0) / 1000);
       if (newest === null || t > newest) newest = t;
     }
-    if (newest === null) return done();
-    var first = lastHomePress === null;
-    if (!first && newest <= lastHomePress) return done();
+    if (err) return done();
+    // La primera lectura solo marca dónde estamos (0 si Vetro aún no tiene ninguna pulsación apuntada),
+    // para que la primera pulsación real sí cuente; tampoco se actúa por pulsaciones viejas
+    if (lastHomePress === null) { lastHomePress = newest === null ? 0 : newest; return done(); }
+    if (newest === null || newest <= lastHomePress) return done();
     lastHomePress = newest;
-    // La primera lectura solo marca dónde estamos; tampoco se actúa por pulsaciones viejas
-    if (first || Date.now() - newest > 5000 || launcherLoaded) return done();
+    if (Date.now() - newest > 5000 || launcherLoaded) return done();
     takeOver('Home pulsado fuera del lanzador', true, done);
   });
 }
@@ -728,6 +784,8 @@ module.exports = {
   checkHome: checkHome,
   checkHomeKey: checkHomeKey,
   homeTick: homeTick,
+  restartBrew: restartBrew,
+  brewSend: brewSend,
   _home: function (v) { if (v !== undefined) launcherLoaded = v; return { launcherLoaded: launcherLoaded, busy: homeBusy }; },
   VETRO: VETRO,
   _test: { seal: seal, open: open, hkdf: hkdf, opackPack: opackPack, opackUnpack: opackUnpack }
