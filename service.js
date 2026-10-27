@@ -2403,6 +2403,7 @@ return module.exports; })();
 //   GET  /tv/source?pos=<n>      -> elige la entrada n del menú Fuentes (solo desde la tele)
 'use strict';
 
+var G = this; // objeto global del contexto que crea TizenBrew para el servicio
 var net = require('net');
 var tls = require('tls');
 var http = require('http');
@@ -2427,6 +2428,12 @@ function lanAddress() {
   return '127.0.0.1';
 }
 config.tvHost = lanAddress();
+
+// Si venimos de una autoactualización, recuperamos la configuración (credenciales incluidas)
+var previous = G && G.__lanzadorState;
+if (previous) {
+  for (var key in previous.config) config[key] = previous.config[key];
+}
 
 // Registro corto para diagnosticar desde la red de casa (GET /status)
 var logLines = [];
@@ -2808,7 +2815,7 @@ function startServer() {
     var u = require('url').parse(req.url, true);
     if (req.method === 'OPTIONS') return reply(res, 204, {});
     if (u.pathname === '/status') {
-      return reply(res, 200, { ok: true, version: 6, atvHost: config.atvHost, tvHost: config.tvHost, hasCreds: !!config.atvCreds, tvToken: config.tvToken,
+      return reply(res, 200, { ok: true, version: 7, atvHost: config.atvHost, tvHost: config.tvHost, hasCreds: !!config.atvCreds, tvToken: config.tvToken,
         tvPort: config.tvPort, tvTls: config.tvTls, log: logLines, atvCreds: isLocal(req) ? config.atvCreds : undefined });
     }
     if (u.pathname === '/config' && req.method === 'POST') {
@@ -2836,6 +2843,14 @@ function startServer() {
       } catch (e) { return reply(res, 500, { ok: false, error: String(e && e.message) }); }
     }
     // Exploración de apps internas de la tele (solo abre apps, no ejecuta código arbitrario)
+    // Autoactualización: carga el puente de una versión concreta (commit) de este repositorio
+    if (u.pathname === '/debug/reload') {
+      var sha = String(u.query.sha || '');
+      if (!/^[0-9a-f]{7,40}$/.test(sha)) return reply(res, 400, { ok: false, error: 'sha no válido' });
+      return selfUpdate(sha, function (err) {
+        reply(res, err ? 500 : 200, err ? { ok: false, error: err.message } : { ok: true, sha: sha });
+      });
+    }
     if (u.pathname === '/debug/meta') {
       try {
         var info = tizen.application.getAppInfo(String(u.query.app));
@@ -2882,8 +2897,38 @@ function startServer() {
     }
     reply(res, 404, { ok: false });
   });
-  server.on('error', function () {}); // ya en marcha (TizenBrew reinicia servicios)
+  server.on('error', function (e) { log('servidor: ' + e.message); }); // ya en marcha (TizenBrew reinicia servicios)
   server.listen(PORT, '0.0.0.0');
+  currentServer = server;
+}
+var currentServer = null;
+
+function selfUpdate(sha, done) {
+  var url = 'https://cdn.jsdelivr.net/gh/AlexGuzzman/lanzador-tv@' + sha + '/service.js';
+  log('actualizando a ' + sha);
+  require('https').get(url, function (resp) {
+    var code = '';
+    resp.setEncoding('utf8');
+    resp.on('data', function (c) { code += c; });
+    resp.on('end', function () {
+      if (resp.statusCode !== 200 || code.indexOf('companionLaunch') < 0) return done(new Error('descarga fallida (' + resp.statusCode + ')'));
+      done(null);
+      // Cerramos este servidor y arrancamos el nuevo código en un contexto limpio
+      setTimeout(function () {
+        currentServer.close();
+        try { currentServer._handle && currentServer._handle.close(); } catch (e) {}
+        setTimeout(function () {
+          var vm = require('vm');
+          var sandbox = {};
+          Object.getOwnPropertyNames(G).forEach(function (k) { if (k !== 'module' && k !== '__lanzadorState') sandbox[k] = G[k]; });
+          sandbox.module = { exports: {} };
+          sandbox.__lanzadorState = { config: config };
+          try { vm.runInContext(code, vm.createContext(sandbox)); }
+          catch (e) { log('error al arrancar la versión nueva: ' + e.message); startServer(); }
+        }, 500);
+      }, 200);
+    });
+  }).on('error', function (e) { done(e); });
 }
 
 module.exports = {
