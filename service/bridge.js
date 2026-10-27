@@ -15,7 +15,14 @@ var http = require('http');
 var crypto = require('crypto');
 
 var PORT = 8095;
-var config = { atvHost: '192.168.1.35', atvPort: 49153, atvCreds: '', tvHost: '127.0.0.1', tvToken: '' };
+var config = { atvHost: '192.168.1.35', atvPort: 49153, atvCreds: '', tvHost: '127.0.0.1', tvPort: 8002, tvTls: true, tvToken: '' };
+
+// Registro corto para diagnosticar desde la red de casa (GET /status)
+var logLines = [];
+function log(msg) {
+  logLines.push(new Date().toISOString().slice(11, 19) + ' ' + msg);
+  if (logLines.length > 40) logLines.shift();
+}
 
 // ---------------------------------------------------------------- Buffers (Node 4 y modernos)
 function buf(x) {
@@ -279,7 +286,9 @@ function companionLaunch(bundleId, done) {
 function tvKeys(steps, done) {
   var name = buf('Lanzador').toString('base64');
   var path = '/api/v2/channels/samsung.remote.control?name=' + name + (config.tvToken ? '&token=' + config.tvToken : '');
-  var sock = tls.connect({ host: config.tvHost, port: 8002, rejectUnauthorized: false });
+  var opts = { host: config.tvHost, port: config.tvPort, rejectUnauthorized: false };
+  var sock = config.tvTls ? tls.connect(opts) : net.connect(opts);
+  log('tv: conectando a ' + config.tvHost + ':' + config.tvPort + (config.tvTls ? ' (tls)' : '') + (config.tvToken ? ' con token' : ' sin token'));
   var wsKey = crypto.randomBytes(16).toString('base64');
   var data = buf(0), upgraded = false, finished = false;
   var timer = setTimeout(function () { finish(new Error('la tele no responde')); }, 30000);
@@ -287,6 +296,7 @@ function tvKeys(steps, done) {
     if (finished) return;
     finished = true;
     clearTimeout(timer);
+    log('tv: fin ' + (err ? err.message : 'ok'));
     try { sock.end(); } catch (e) {}
     done(err || null);
   }
@@ -298,8 +308,10 @@ function tvKeys(steps, done) {
     sock.write(concat([header, mask, payload]));
   }
   sock.on('error', function (e) { finish(e); });
-  sock.on('secureConnect', function () {
-    sock.write('GET ' + path + ' HTTP/1.1\r\nHost: ' + config.tvHost + ':8002\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n' +
+  sock.on('close', function () { log('tv: conexión cerrada'); });
+  sock.on(config.tvTls ? 'secureConnect' : 'connect', function () {
+    log('tv: conectado');
+    sock.write('GET ' + path + ' HTTP/1.1\r\nHost: ' + config.tvHost + ':' + config.tvPort + '\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n' +
       'Sec-WebSocket-Key: ' + wsKey + '\r\nSec-WebSocket-Version: 13\r\n\r\n');
   });
   sock.on('data', function (chunk) {
@@ -307,6 +319,7 @@ function tvKeys(steps, done) {
     if (!upgraded) {
       var end = data.toString('binary').indexOf('\r\n\r\n');
       if (end < 0) return;
+      log('tv: respuesta ' + data.slice(0, 40).toString('binary').split('\r\n')[0]);
       upgraded = true;
       data = data.slice(end + 4);
     }
@@ -316,6 +329,7 @@ function tvKeys(steps, done) {
       if (len === 126) { if (data.length < 4) return; len = data.readUInt16BE(2); off = 4; }
       if (data.length < off + len) return;
       var text = data.slice(off, off + len).toString('utf8');
+      log('tv: mensaje (op ' + (data[0] & 0x0f) + ') ' + text.slice(0, 120));
       data = data.slice(off + len);
       var msg;
       try { msg = JSON.parse(text); } catch (e) { continue; }
@@ -361,7 +375,8 @@ function startServer() {
     var u = require('url').parse(req.url, true);
     if (req.method === 'OPTIONS') return reply(res, 204, {});
     if (u.pathname === '/status') {
-      return reply(res, 200, { ok: true, atvHost: config.atvHost, hasCreds: !!config.atvCreds, tvToken: config.tvToken, atvCreds: isLocal(req) ? config.atvCreds : undefined });
+      return reply(res, 200, { ok: true, version: 2, atvHost: config.atvHost, hasCreds: !!config.atvCreds, tvToken: config.tvToken,
+        tvPort: config.tvPort, tvTls: config.tvTls, log: logLines, atvCreds: isLocal(req) ? config.atvCreds : undefined });
     }
     if (u.pathname === '/config' && req.method === 'POST') {
       var body = '';
@@ -371,7 +386,9 @@ function startServer() {
           var c = JSON.parse(body);
           if (c.atvHost) config.atvHost = c.atvHost;
           if (c.atvCreds) config.atvCreds = c.atvCreds;
-          if (c.tvToken) config.tvToken = c.tvToken;
+          if (c.tvToken !== undefined) config.tvToken = c.tvToken;
+          if (c.tvPort) config.tvPort = c.tvPort;
+          if (c.tvTls !== undefined) config.tvTls = !!c.tvTls;
           reply(res, 200, { ok: true });
         } catch (e) { reply(res, 400, { ok: false, error: 'JSON no válido' }); }
       });
