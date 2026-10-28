@@ -49,7 +49,7 @@
 
   /* ---------- Cabecera: hora y tiempo ---------- */
   header {
-    position: fixed; top: 3.6vw; left: 4.2vw; right: 4.2vw;
+    position: fixed; top: 1.3vw; left: 1.3vw; right: 1.3vw;
     display: flex; justify-content: space-between; align-items: flex-start;
   }
   /* Hora y fecha, arriba de la tarjeta del tiempo */
@@ -62,7 +62,9 @@
     background: var(--glass); border: 1px solid var(--glass-border);
     -webkit-backdrop-filter: blur(36px) saturate(1.5); backdrop-filter: blur(36px) saturate(1.5);
   }
-  #weather { width: 27vw; padding: 1.3vw 1.6vw 1.2vw; border-radius: 1.6vw; }
+  /* Mismo ancho que la webcam; el alto lo iguala matchCards() y el contenido se reparte en él */
+  #weather { width: 31vw; padding: 1.3vw 1.6vw 1.2vw; border-radius: 1.6vw;
+             display: flex; flex-direction: column; justify-content: space-between; }
   /* El reloj se ve siempre; la parte del tiempo aparece cuando llegan los datos */
   #weather .w-top, #w-hours { opacity: 0; transition: opacity 1s ease; }
   #weather.ready .w-top, #weather.ready #w-hours { opacity: 1; }
@@ -85,10 +87,13 @@
   #cam-view { position: relative; display: block; width: 100%; padding-top: 56.25%; border-radius: 1vw; overflow: hidden; background: rgba(0,0,0,0.25); }
   .cam-img { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity 1.2s ease; }
   .cam-img.show { opacity: 1; }
-  .cam-info { display: flex; justify-content: space-between; align-items: baseline; margin: 0.6vw 0.3vw 0; }
-  #cam-name { font-size: 1.15vw; font-weight: 600; }
-  #cam-age { font-size: 0.95vw; font-weight: 500; color: var(--text-soft); }
-  #cam-credit { font-size: 0.7vw; color: var(--text-soft); margin: 0.25vw 0.3vw 0; }
+  /* Una sola línea: nombre y hora de la imagen a la izquierda, aviso de Windy a la derecha */
+  .cam-info { display: flex; justify-content: space-between; align-items: baseline; margin: 0.55vw 0.3vw 0; font-size: 0.9vw; }
+  #cam-name { font-weight: 600; }
+  #cam-age { font-weight: 500; color: var(--text-soft); }
+  #cam-age:before { content: "\00B7"; margin: 0 0.4vw; }
+  #cam-age:empty:before { content: none; }
+  #cam-credit { color: var(--text-soft); white-space: nowrap; }
 
   /* ---------- Iconos ---------- */
   /* Una sola fila a la vista: las dos ocupan el mismo sitio y abajo/arriba cambia de una a otra */
@@ -197,8 +202,7 @@
     <div>
       <div id="webcam" class="glass">
         <a id="cam-view" href="https://www.windy.com/webcams" onclick="return false"><img class="cam-img" id="cam0" alt=""><img class="cam-img" id="cam1" alt=""></a>
-        <div class="cam-info"><span id="cam-name"></span><span id="cam-age"></span></div>
-        <div id="cam-credit">Webcams provided by Windy.com</div>
+        <div class="cam-info"><span><span id="cam-name"></span><span id="cam-age"></span></span><span id="cam-credit">Webcams provided by Windy.com</span></div>
       </div>
     </div>
     <div id="weather" class="glass">
@@ -394,11 +398,11 @@ function weatherInfo(code, isDay) {
 // Alterna las webcams cada WEBCAM_SECONDS con un fundido. Si una falla pasa a la siguiente;
 // si fallan todas, oculta la tarjeta y lo vuelve a intentar al cabo de un rato.
 var camIndex = -1, camSlot = 0, camFails = 0, camTimer = null;
-function ageText(iso) {
-  var t = iso ? Date.parse(iso) : NaN;
-  if (isNaN(t)) return "";
-  var min = Math.max(0, Math.round((Date.now() - t) / 60000));
-  return min < 1 ? "ahora" : min < 60 ? "hace " + min + " min" : "hace " + Math.round(min / 60) + " h";
+// Hora local de la imagen (la de la tele), p. ej. "09:22"
+function timeText(iso) {
+  var t = iso ? new Date(Date.parse(iso)) : null;
+  if (!t || isNaN(t.getTime())) return "";
+  return pad(t.getHours()) + ":" + pad(t.getMinutes());
 }
 function nextWebcam() {
   clearTimeout(camTimer);
@@ -413,15 +417,17 @@ function nextWebcam() {
       camSlot = 1 - camSlot;
       camFails = 0;
       document.getElementById("cam-name").textContent = cam.name;
-      document.getElementById("cam-age").textContent = ageText(w.updated);
+      document.getElementById("cam-age").textContent = timeText(w.updated);
       document.getElementById("cam-view").href = w.link;
       document.getElementById("webcam").className = "glass ready";
       camTimer = setTimeout(nextWebcam, WEBCAM_SECONDS * 1000);
     };
     next.onerror = webcamFailed;
-    // Con la misma URL (caché de 5 min del puente) el navegador puede no volver a avisar de la carga
-    if (next.src === w.image && next.complete && next.naturalWidth) return next.onload();
-    next.src = w.image;
+    // Windy usa siempre la misma URL para la imagen actual: se le añade la hora de su última actualización
+    // para que la tele descargue la nueva cuando cambia (y reutilice la que tiene mientras no cambie)
+    var src = w.image + (w.image.indexOf("?") < 0 ? "?" : "&") + "t=" + encodeURIComponent(w.updated || "");
+    if (next.src === src && next.complete && next.naturalWidth) return next.onload();
+    next.src = src;
   });
 }
 function webcamFailed() {
@@ -613,6 +619,12 @@ document.addEventListener("keydown", function (e) {
 });
 
 build();
+// La tarjeta del tiempo con la misma altura que la de la webcam (que la fija su imagen 16:9)
+function matchCards() {
+  document.getElementById("weather").style.minHeight = document.getElementById("webcam").offsetHeight + "px";
+}
+matchCards();
+window.addEventListener("resize", matchCards);
 updateClock();
 setInterval(updateClock, 1000);
 updateWeather();
