@@ -11,7 +11,7 @@
   :root {
     --text: #ffffff;
     --text-soft: rgba(255, 255, 255, 0.75);
-    --glass: rgba(20, 22, 30, 0.32);
+    --glass: rgba(20, 22, 30, 0.15);
     --glass-border: rgba(255, 255, 255, 0.16);
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -58,9 +58,11 @@
   #time { font-size: 2.9vw; font-weight: 200; letter-spacing: -0.08vw; line-height: 1; }
   #date { font-size: 1vw; font-weight: 500; color: var(--text-soft); text-align: right; white-space: nowrap; }
 
+  /* Cristal transparente: oscurece poco y casi no difumina; la sombra mantiene el texto legible */
   .glass {
     background: var(--glass); border: 1px solid var(--glass-border);
-    -webkit-backdrop-filter: blur(36px) saturate(1.5); backdrop-filter: blur(36px) saturate(1.5);
+    -webkit-backdrop-filter: blur(8px) saturate(1.2); backdrop-filter: blur(8px) saturate(1.2);
+    text-shadow: 0 0.08vw 0.5vw rgba(0, 0, 0, 0.55);
   }
   /* Mismo ancho que la webcam; el alto lo iguala matchCards() y el contenido se reparte en él */
   #weather { width: 31vw; padding: 1.3vw 1.6vw 1.2vw; border-radius: 1.6vw;
@@ -68,6 +70,7 @@
   /* El reloj se ve siempre; la parte del tiempo aparece cuando llegan los datos */
   #weather .w-top, #w-hours { opacity: 0; transition: opacity 1s ease; }
   #weather.ready .w-top, #weather.ready #w-hours { opacity: 1; }
+  #weather .hr-i svg, #w-icon svg { filter: drop-shadow(0 0.08vw 0.3vw rgba(0, 0, 0, 0.5)); }
   .w-top { display: flex; justify-content: space-between; align-items: flex-start; }
   #w-city { font-size: 1.15vw; font-weight: 600; }
   #w-temp { font-size: 3.9vw; font-weight: 300; line-height: 1; margin-top: 0.2vw; }
@@ -100,8 +103,8 @@
   #rows { position: fixed; left: 0; right: 0; bottom: 3.4vw; height: 8.92vw; }
   .row { position: absolute; left: 50%; bottom: 0; display: flex; width: max-content;
          padding: 1.1vw 1vw; border-radius: 2.4vw;
-         background: rgba(255,255,255,0.14); border: 1px solid rgba(255,255,255,0.16);
-         -webkit-backdrop-filter: blur(40px) saturate(1.4); backdrop-filter: blur(40px) saturate(1.4);
+         background: var(--glass); border: 1px solid var(--glass-border);
+         -webkit-backdrop-filter: blur(8px) saturate(1.2); backdrop-filter: blur(8px) saturate(1.2);
          opacity: 0; pointer-events: none; transform: translate(-50%, 2.5vw);
          transition: opacity 0.35s ease, transform 0.45s cubic-bezier(.2,.8,.2,1); }
   .row.above { transform: translate(-50%, -2.5vw); }
